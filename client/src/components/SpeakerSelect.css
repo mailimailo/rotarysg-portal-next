@@ -1,0 +1,198 @@
+.speaker-select-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+}
+
+.speaker-select-card {
+  background: white;
+  border-radius: 16px;
+  padding: 3rem;
+  max-width: 900px;
+  width: 100%;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.speaker-select-card.error {
+  text-align: center;
+}
+
+.select-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.select-header h1 {
+  font-size: 2rem;
+  margin: 0 0 0.5rem 0;
+  color: #667eea;
+}
+
+.select-header h2 {
+  font-size: 1.5rem;
+  margin: 0;
+  color: #333;
+}
+
+.speaker-info {
+  margin-bottom: 2rem;
+  padding: 1.5rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.speaker-info p {
+  margin: 0.5rem 0;
+  color: #333;
+}
+
+.message-box {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: white;
+  border-left: 4px solid #667eea;
+  border-radius: 4px;
+}
+
+.select-instructions {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.select-instructions p {
+  color: #666;
+  font-size: 1.1rem;
+}
+
+.lunches-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.lunch-option {
+  border: 3px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 1.5rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: white;
+}
+
+.lunch-option:hover:not(.disabled) {
+  border-color: #667eea;
+  transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.lunch-option.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.lunch-date {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 0.5rem;
+}
+
+.lunch-time {
+  font-size: 1.2rem;
+  color: #667eea;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.lunch-location {
+  color: #666;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.lunch-title {
+  color: #333;
+  font-weight: 500;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+}
+
+.select-button {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 8px;
+  text-align: center;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.lunch-option:hover:not(.disabled) .select-button {
+  background: linear-gradient(135deg, #5568d3 0%, #653a8f 100%);
+}
+
+.decline-section {
+  text-align: center;
+  padding: 2rem;
+  border-top: 2px solid #e0e0e0;
+  margin-top: 2rem;
+}
+
+.decline-section p {
+  margin-bottom: 1rem;
+  color: #666;
+}
+
+.submitted-state {
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.success-icon,
+.declined-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.submitted-state h3 {
+  font-size: 1.5rem;
+  color: #333;
+  margin-bottom: 1rem;
+}
+
+.submitted-state p {
+  color: #666;
+  margin: 0.5rem 0;
+}
+
+.selected-lunch-card {
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 2rem;
+  margin: 1.5rem 0;
+  border-left: 4px solid #28a745;
+}
+
+.selected-lunch-card strong {
+  display: block;
+  font-size: 1.2rem;
+  color: #333;
+  margin-bottom: 0.5rem;
+}
+
+.selected-lunch-card p {
+  margin: 0.25rem 0;
+  color: #666;
+}
+
+.info-text {
+  margin-top: 1.5rem;
+  font-style: italic;
+  color: #999;
+}
+
