@@ -13,6 +13,24 @@ const JWT_SECRET = process.env.JWT_SECRET || 'rotary-secret-key-change-in-produc
 app.use(cors());
 app.use(express.json());
 
+// Root Endpoint (muss vor anderen Routes sein)
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Rotary Portal Backend API',
+    service: 'rotary-portal-backend',
+    version: '1.0.0',
+    status: 'running',
+    endpoints: {
+      health: '/api/health',
+      login: '/api/login',
+      lunches: '/api/lunches',
+      speakers: '/api/speakers',
+      calendar: '/api/calendar',
+      speakerRequests: '/api/speaker-requests'
+    }
+  });
+});
+
 // Datenbank initialisieren
 const dbPath = path.join(__dirname, 'rotary.db');
 const db = new sqlite3.Database(dbPath);
@@ -891,24 +909,6 @@ app.post('/api/public/speaker-request/:token/decline', (req, res) => {
       );
     }
   );
-});
-
-// Root Endpoint
-app.get('/', (req, res) => {
-  res.json({ 
-    message: 'Rotary Portal Backend API',
-    service: 'rotary-portal-backend',
-    version: '1.0.0',
-    status: 'running',
-    endpoints: {
-      health: '/api/health',
-      login: '/api/login',
-      lunches: '/api/lunches',
-      speakers: '/api/speakers',
-      calendar: '/api/calendar',
-      speakerRequests: '/api/speaker-requests'
-    }
-  });
 });
 
 // Health Check Endpoint (für Render.com)
