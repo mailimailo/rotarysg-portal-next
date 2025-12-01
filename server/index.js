@@ -893,6 +893,24 @@ app.post('/api/public/speaker-request/:token/decline', (req, res) => {
   );
 });
 
+// Root Endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Rotary Portal Backend API',
+    service: 'rotary-portal-backend',
+    version: '1.0.0',
+    status: 'running',
+    endpoints: {
+      health: '/api/health',
+      login: '/api/login',
+      lunches: '/api/lunches',
+      speakers: '/api/speakers',
+      calendar: '/api/calendar',
+      speakerRequests: '/api/speaker-requests'
+    }
+  });
+});
+
 // Health Check Endpoint (für Render.com)
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', service: 'rotary-portal-backend' });
