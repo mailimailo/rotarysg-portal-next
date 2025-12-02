@@ -27,16 +27,16 @@ function Navbar({ user, onLogout }) {
             Lunches
           </Link>
           <Link 
-            to="/speakers" 
-            className={location.pathname === '/speakers' ? 'active' : ''}
-          >
-            Speaker
-          </Link>
-          <Link 
             to="/calendar" 
             className={location.pathname === '/calendar' ? 'active' : ''}
           >
             Kalender
+          </Link>
+          <Link 
+            to="/speakers" 
+            className={location.pathname === '/speakers' ? 'active' : ''}
+          >
+            Speaker
           </Link>
           <Link 
             to="/speaker-requests" 
