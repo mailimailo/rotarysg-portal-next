@@ -38,8 +38,15 @@ app.get('/', (req, res) => {
 });
 
 // Datenbank initialisieren
-const dbPath = path.join(__dirname, 'rotary.db');
-const db = new sqlite3.Database(dbPath);
+// Verwende persistenten Speicher auf Railway (Volume) oder lokalen Pfad
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'rotary.db');
+const db = new sqlite3.Database(dbPath, (err) => {
+  if (err) {
+    console.error('❌ Datenbank-Fehler:', err.message);
+  } else {
+    console.log('✅ Datenbank verbunden:', dbPath);
+  }
+});
 
 // Datenbank-Schema erstellen
 db.serialize(() => {
