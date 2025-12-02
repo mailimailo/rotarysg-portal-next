@@ -1056,22 +1056,52 @@ app.get('/api/health', (req, res) => {
 // Database Test Endpoint
 app.get('/api/test-db', authenticateToken, async (req, res) => {
   try {
-    const testQuery = dbType === 'postgres'
-      ? 'SELECT COUNT(*) as count FROM speakers'
-      : 'SELECT COUNT(*) as count FROM speakers';
+    // Prüfe ob Tabelle existiert
+    let tableExists = false;
+    let speakersCount = 0;
+    let error = null;
     
-    const result = await dbGet(testQuery);
+    if (dbType === 'postgres') {
+      // Prüfe ob speakers Tabelle existiert
+      const tableCheck = await db.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_schema = 'public' 
+          AND table_name = 'speakers'
+        );
+      `);
+      tableExists = tableCheck.rows[0]?.exists || false;
+      
+      if (tableExists) {
+        const countResult = await db.query('SELECT COUNT(*) as count FROM speakers');
+        speakersCount = parseInt(countResult.rows[0]?.count || 0);
+      }
+    } else {
+      try {
+        const result = await dbGet('SELECT COUNT(*) as count FROM speakers');
+        tableExists = true;
+        speakersCount = result?.count || 0;
+      } catch (e) {
+        tableExists = false;
+        error = e.message;
+      }
+    }
+    
     res.json({ 
       status: 'ok', 
       dbType,
-      speakersCount: result?.count || 0,
-      message: 'Datenbank-Verbindung erfolgreich'
+      tableExists,
+      speakersCount,
+      message: tableExists ? 'Datenbank-Verbindung erfolgreich' : 'Tabelle speakers existiert nicht',
+      error: error
     });
   } catch (err) {
     res.status(500).json({ 
       status: 'error', 
       dbType,
       error: err.message,
+      code: err.code,
+      detail: err.detail,
       stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
