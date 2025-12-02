@@ -112,25 +112,40 @@ async function dbRun(query, params = []) {
   if (exportedDbType === 'postgres') {
     let paramIndex = 1;
     const pgQuery = query.replace(/\?/g, () => `$${paramIndex++}`);
-    // Für INSERT mit RETURNING
-    if (pgQuery.includes('RETURNING')) {
+    
+    try {
       const result = await db.query(pgQuery, params);
+      
+      // Für INSERT mit RETURNING
+      if (pgQuery.includes('RETURNING')) {
+        const returnedId = result.rows[0]?.id;
+        return {
+          lastID: returnedId,
+          changes: result.rowCount || 0,
+          rows: result.rows
+        };
+      }
+      
+      // Für UPDATE/DELETE ohne RETURNING
       return {
-        lastID: result.rows[0]?.id,
-        changes: result.rowCount || 0,
-        rows: result.rows
+        lastID: result.rows[0]?.id || null,
+        changes: result.rowCount || 0
       };
+    } catch (err) {
+      console.error('dbRun Fehler:', err);
+      console.error('Query:', pgQuery);
+      console.error('Params:', params);
+      throw err;
     }
-    const result = await db.query(pgQuery, params);
-    return {
-      lastID: result.rows[0]?.id,
-      changes: result.rowCount || 0
-    };
   } else {
     return new Promise((resolve, reject) => {
       db.run(query, params, function(err) {
-        if (err) reject(err);
-        else resolve({ lastID: this.lastID, changes: this.changes });
+        if (err) {
+          console.error('SQLite dbRun Fehler:', err);
+          reject(err);
+        } else {
+          resolve({ lastID: this.lastID, changes: this.changes });
+        }
       });
     });
   }

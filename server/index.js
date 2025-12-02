@@ -336,9 +336,20 @@ app.post('/api/speakers', authenticateToken, async (req, res) => {
     
     const result = await dbRun(insertQuery, [name, email, phone, company, topic, bio]);
     const id = result.lastID || result.rows?.[0]?.id;
+    
+    if (!id) {
+      console.error('Keine ID zurückgegeben:', result);
+      return res.status(500).json({ error: 'Fehler beim Erstellen des Speakers: Keine ID zurückgegeben' });
+    }
+    
     res.json({ id, name, email, phone, company, topic, bio });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('Fehler beim Erstellen des Speakers:', err);
+    console.error('Stack:', err.stack);
+    return res.status(500).json({ 
+      error: 'Fehler beim Speichern des Speakers',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 });
 
