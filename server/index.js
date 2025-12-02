@@ -39,32 +39,39 @@ app.get('/', (req, res) => {
 
 // Datenbank-Schema erstellen
 async function initDatabase() {
+  console.log('🔧 Initialisiere Datenbank... dbType:', dbType);
+  
   if (dbType === 'postgres') {
-    // PostgreSQL Schema
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'user',
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-    
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS speakers (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        email TEXT,
-        phone TEXT,
-        company TEXT,
-        topic TEXT,
-        bio TEXT,
-        status TEXT DEFAULT 'pending',
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
+    try {
+      console.log('📝 Erstelle PostgreSQL Tabellen...');
+      
+      // PostgreSQL Schema
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          username TEXT UNIQUE NOT NULL,
+          password TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'user',
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      console.log('✅ Tabelle users erstellt');
+      
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS speakers (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          email TEXT,
+          phone TEXT,
+          company TEXT,
+          topic TEXT,
+          bio TEXT,
+          status TEXT DEFAULT 'pending',
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      console.log('✅ Tabelle speakers erstellt');
     
     await db.query(`
       CREATE TABLE IF NOT EXISTS lunches (
@@ -136,15 +143,26 @@ async function initDatabase() {
       )
     `);
     
-    // Standard-Admin-Benutzer erstellen
-    const defaultPassword = bcrypt.hashSync('admin123', 10);
-    await db.query(`
-      INSERT INTO users (username, password, role) 
-      VALUES ($1, $2, 'admin'), ($3, $4, 'admin')
-      ON CONFLICT (username) DO NOTHING
-    `, ['praesident', defaultPassword, 'programm', defaultPassword]);
-    
-    console.log('✅ PostgreSQL Schema erstellt');
+      // Standard-Admin-Benutzer erstellen
+      const defaultPassword = bcrypt.hashSync('admin123', 10);
+      try {
+        await db.query(`
+          INSERT INTO users (username, password, role) 
+          VALUES ($1, $2, 'admin'), ($3, $4, 'admin')
+          ON CONFLICT (username) DO NOTHING
+        `, ['praesident', defaultPassword, 'programm', defaultPassword]);
+        console.log('✅ Admin-Benutzer erstellt');
+      } catch (userErr) {
+        console.error('⚠️ Fehler beim Erstellen der Admin-Benutzer:', userErr.message);
+      }
+      
+      console.log('✅ PostgreSQL Schema vollständig erstellt');
+    } catch (err) {
+      console.error('❌ Fehler beim Erstellen der PostgreSQL Tabellen:', err);
+      console.error('Error Code:', err.code);
+      console.error('Error Detail:', err.detail);
+      console.error('Error Message:', err.message);
+      throw err; // Fehler weiterwerfen, damit wir es sehen
   } else {
     // SQLite Schema (lokal)
     db.serialize(() => {
@@ -251,11 +269,18 @@ async function initDatabase() {
 }
 
 // Datenbank initialisieren
-initDatabase().catch(err => {
-  console.error('❌ Fehler beim Initialisieren der Datenbank:', err);
-  console.error('Stack:', err.stack);
-  // Server trotzdem starten, damit Health Check funktioniert
-});
+let dbInitialized = false;
+initDatabase()
+  .then(() => {
+    dbInitialized = true;
+    console.log('✅ Datenbank erfolgreich initialisiert');
+  })
+  .catch(err => {
+    console.error('❌ Fehler beim Initialisieren der Datenbank:', err);
+    console.error('Stack:', err.stack);
+    // Server trotzdem starten, damit Health Check funktioniert
+    dbInitialized = false;
+  });
 
 // Middleware für JWT-Authentifizierung
 const authenticateToken = (req, res, next) => {
@@ -331,7 +356,23 @@ app.post('/api/speakers', authenticateToken, async (req, res) => {
   const { name, email, phone, company, topic, bio } = req.body;
   
   console.log('🔵 Speaker erstellen - dbType:', dbType);
+  console.log('🔵 dbInitialized:', dbInitialized);
   console.log('🔵 Daten:', { name, email, phone, company, topic, bio });
+  
+  // Prüfe ob Datenbank initialisiert ist
+  if (!dbInitialized && dbType === 'postgres') {
+    console.log('⚠️ Datenbank noch nicht initialisiert, versuche erneut...');
+    try {
+      await initDatabase();
+      dbInitialized = true;
+    } catch (initErr) {
+      console.error('❌ Fehler bei erneuter Initialisierung:', initErr);
+      return res.status(500).json({ 
+        error: 'Datenbank nicht initialisiert',
+        details: initErr.message
+      });
+    }
+  }
   
   try {
     if (dbType === 'postgres') {
