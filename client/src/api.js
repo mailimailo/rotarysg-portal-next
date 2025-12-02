@@ -1,9 +1,7 @@
 import axios from 'axios'
 
-// API URL: In Produktion wird VITE_API_URL verwendet, sonst lokaler Proxy
-const API_URL = import.meta.env.VITE_API_URL 
-  ? `${import.meta.env.VITE_API_URL}/api`
-  : '/api'
+// API URL: Lokaler Proxy für Entwicklung
+const API_URL = '/api'
 
 const api = axios.create({
   baseURL: API_URL,
@@ -63,9 +61,7 @@ export const getSpeakerRequests = () => api.get('/speaker-requests')
 export const updateSpeakerRequest = (id, data) => api.put(`/speaker-requests/${id}`, data)
 // Öffentliche API-Aufrufe (ohne Authentifizierung)
 const publicApi = axios.create({
-  baseURL: import.meta.env.VITE_API_URL 
-    ? `${import.meta.env.VITE_API_URL}/api`
-    : '/api',
+  baseURL: '/api',
   headers: {
     'Content-Type': 'application/json'
   }
