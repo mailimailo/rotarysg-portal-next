@@ -330,19 +330,33 @@ app.get('/api/speakers/:id', authenticateToken, async (req, res) => {
 app.post('/api/speakers', authenticateToken, async (req, res) => {
   const { name, email, phone, company, topic, bio } = req.body;
   try {
-    const insertQuery = dbType === 'postgres'
-      ? 'INSERT INTO speakers (name, email, phone, company, topic, bio) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id'
-      : 'INSERT INTO speakers (name, email, phone, company, topic, bio) VALUES (?, ?, ?, ?, ?, ?)';
+    // Verwende immer ? Platzhalter, dbRun konvertiert automatisch für PostgreSQL
+    const insertQuery = 'INSERT INTO speakers (name, email, phone, company, topic, bio) VALUES (?, ?, ?, ?, ?, ?)';
     
-    const result = await dbRun(insertQuery, [name, email, phone, company, topic, bio]);
-    const id = result.lastID || result.rows?.[0]?.id;
-    
-    if (!id) {
-      console.error('Keine ID zurückgegeben:', result);
-      return res.status(500).json({ error: 'Fehler beim Erstellen des Speakers: Keine ID zurückgegeben' });
+    if (dbType === 'postgres') {
+      // Für PostgreSQL: Direkt mit RETURNING
+      const pgQuery = 'INSERT INTO speakers (name, email, phone, company, topic, bio) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id';
+      const result = await db.query(pgQuery, [name, email, phone, company, topic, bio]);
+      const id = result.rows[0]?.id;
+      
+      if (!id) {
+        console.error('Keine ID zurückgegeben:', result);
+        return res.status(500).json({ error: 'Fehler beim Erstellen des Speakers: Keine ID zurückgegeben' });
+      }
+      
+      res.json({ id, name, email, phone, company, topic, bio });
+    } else {
+      // Für SQLite: Verwende dbRun
+      const result = await dbRun(insertQuery, [name, email, phone, company, topic, bio]);
+      const id = result.lastID;
+      
+      if (!id) {
+        console.error('Keine ID zurückgegeben:', result);
+        return res.status(500).json({ error: 'Fehler beim Erstellen des Speakers: Keine ID zurückgegeben' });
+      }
+      
+      res.json({ id, name, email, phone, company, topic, bio });
     }
-    
-    res.json({ id, name, email, phone, company, topic, bio });
   } catch (err) {
     console.error('Fehler beim Erstellen des Speakers:', err);
     console.error('Stack:', err.stack);
