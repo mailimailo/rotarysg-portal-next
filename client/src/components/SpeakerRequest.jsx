@@ -266,7 +266,8 @@ Rotary Club St.Gallen`
                         </div>
                       </details>
                     </div>
-                    
+                  </div>
+                )}
 
                 {request.status === 'pending' && (
                   <div className="request-actions">
