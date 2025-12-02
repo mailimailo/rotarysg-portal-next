@@ -1013,28 +1013,47 @@ app.post('/api/webhooks/calendly', (req, res) => {
 // Helper-Funktionen
 function generateCalendlyLink(lunches, request) {
   // Calendly erfordert einen Account und Event-Type
-  // Für Demo: Wir geben Anweisungen zurück
-  return `https://calendly.com/YOUR-USERNAME/rotary-lunch?name=${encodeURIComponent(request.speaker_name)}&email=${encodeURIComponent(request.speaker_email || '')}`;
+  // Format: https://calendly.com/username/event-type
+  // Für mehrere Termine: Calendly "Collective" oder mehrere Events
+  // Hier geben wir einen Template-Link zurück
+  const firstDate = new Date(lunches[0].date);
+  const dateStr = firstDate.toISOString().split('T')[0];
+  
+  return `https://calendly.com/YOUR-USERNAME/rotary-lunch?month=${dateStr.split('-')[0]}-${dateStr.split('-')[1]}&date=${dateStr}`;
 }
 
 function generateGoogleCalendarLink(lunches) {
-  // Google Calendar "Find a time" Link
+  // Google Calendar "Find a time" Link mit mehreren Optionen
+  // Format: https://calendar.google.com/calendar/render?action=TEMPLATE&text=...
+  const text = encodeURIComponent('Rotary Lunch - Terminauswahl');
   const dates = lunches.map(l => {
-    const date = new Date(l.date);
-    return date.toISOString().split('T')[0].replace(/-/g, '');
-  }).join(',');
+    const start = new Date(l.date);
+    const end = new Date(start.getTime() + 75 * 60 * 1000);
+    return {
+      start: start.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z',
+      end: end.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
+    };
+  });
   
-  return `https://calendar.google.com/calendar/render?action=TEMPLATE&dates=${dates}`;
+  // Erstelle einen Link für den ersten Termin (Google unterstützt nur einen pro Link)
+  const first = dates[0];
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${first.start}/${first.end}&details=${encodeURIComponent('Bitte wählen Sie einen passenden Termin aus der Liste')}`;
 }
 
 function generateDoodleLink(lunches, request) {
-  // Doodle Umfrage Link (erfordert Doodle Account)
+  // Doodle Umfrage erstellen
+  // Format: https://doodle.com/poll/create
+  // Für automatische Erstellung bräuchte man die Doodle API
+  const title = encodeURIComponent(`Rotary Lunch - ${request.speaker_name}`);
   const options = lunches.map(l => {
     const date = new Date(l.date);
-    return `${date.toISOString().split('T')[0]}T${date.toTimeString().split(' ')[0]}`;
+    const dateStr = date.toISOString().split('T')[0];
+    const timeStr = date.toTimeString().split(' ')[0].substring(0, 5);
+    return `${dateStr}T${timeStr}`;
   }).join(',');
   
-  return `https://doodle.com/poll/create?options=${options}&title=Rotary+Lunch+Terminauswahl`;
+  // Doodle Link für manuelle Erstellung
+  return `https://doodle.com/poll/create?title=${title}&options=${options}`;
 }
 
 app.listen(PORT, () => {

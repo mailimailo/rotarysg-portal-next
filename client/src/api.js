@@ -59,6 +59,7 @@ export const updateInvitation = (id, data) => api.put(`/invitations/${id}`, data
 export const createSpeakerRequest = (data) => api.post('/speaker-requests', data)
 export const getSpeakerRequests = () => api.get('/speaker-requests')
 export const updateSpeakerRequest = (id, data) => api.put(`/speaker-requests/${id}`, data)
+export const generateCalendlyLinks = (id) => api.post(`/speaker-requests/${id}/generate-calendly`)
 // Öffentliche API-Aufrufe (ohne Authentifizierung)
 const publicApi = axios.create({
   baseURL: '/api',
