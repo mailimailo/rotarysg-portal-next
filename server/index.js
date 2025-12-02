@@ -329,40 +329,64 @@ app.get('/api/speakers/:id', authenticateToken, async (req, res) => {
 
 app.post('/api/speakers', authenticateToken, async (req, res) => {
   const { name, email, phone, company, topic, bio } = req.body;
+  
+  console.log('🔵 Speaker erstellen - dbType:', dbType);
+  console.log('🔵 Daten:', { name, email, phone, company, topic, bio });
+  
   try {
-    // Verwende immer ? Platzhalter, dbRun konvertiert automatisch für PostgreSQL
-    const insertQuery = 'INSERT INTO speakers (name, email, phone, company, topic, bio) VALUES (?, ?, ?, ?, ?, ?)';
-    
     if (dbType === 'postgres') {
       // Für PostgreSQL: Direkt mit RETURNING
       const pgQuery = 'INSERT INTO speakers (name, email, phone, company, topic, bio) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id';
+      console.log('🔵 PostgreSQL Query:', pgQuery);
+      console.log('🔵 Params:', [name, email, phone, company, topic, bio]);
+      
       const result = await db.query(pgQuery, [name, email, phone, company, topic, bio]);
+      console.log('🔵 Query Result:', result);
+      console.log('🔵 Rows:', result.rows);
+      
       const id = result.rows[0]?.id;
+      console.log('🔵 Extracted ID:', id);
       
       if (!id) {
-        console.error('Keine ID zurückgegeben:', result);
-        return res.status(500).json({ error: 'Fehler beim Erstellen des Speakers: Keine ID zurückgegeben' });
+        console.error('❌ Keine ID zurückgegeben:', result);
+        return res.status(500).json({ 
+          error: 'Fehler beim Erstellen des Speakers: Keine ID zurückgegeben',
+          debug: {
+            result: result,
+            rows: result.rows,
+            rowCount: result.rowCount
+          }
+        });
       }
       
+      console.log('✅ Speaker erfolgreich erstellt mit ID:', id);
       res.json({ id, name, email, phone, company, topic, bio });
     } else {
       // Für SQLite: Verwende dbRun
+      const insertQuery = 'INSERT INTO speakers (name, email, phone, company, topic, bio) VALUES (?, ?, ?, ?, ?, ?)';
       const result = await dbRun(insertQuery, [name, email, phone, company, topic, bio]);
       const id = result.lastID;
       
       if (!id) {
-        console.error('Keine ID zurückgegeben:', result);
+        console.error('❌ Keine ID zurückgegeben:', result);
         return res.status(500).json({ error: 'Fehler beim Erstellen des Speakers: Keine ID zurückgegeben' });
       }
       
       res.json({ id, name, email, phone, company, topic, bio });
     }
   } catch (err) {
-    console.error('Fehler beim Erstellen des Speakers:', err);
-    console.error('Stack:', err.stack);
+    console.error('❌ Fehler beim Erstellen des Speakers:', err);
+    console.error('❌ Error Name:', err.name);
+    console.error('❌ Error Message:', err.message);
+    console.error('❌ Error Code:', err.code);
+    console.error('❌ Error Detail:', err.detail);
+    console.error('❌ Stack:', err.stack);
+    
     return res.status(500).json({ 
       error: 'Fehler beim Speichern des Speakers',
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+      details: err.message,
+      code: err.code,
+      hint: err.hint
     });
   }
 });
