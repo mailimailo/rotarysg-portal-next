@@ -10,7 +10,11 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'rotary-secret-key-change-in-production';
 
-app.use(cors());
+// CORS für Production (alle Origins erlauben)
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? true : 'http://localhost:3000',
+  credentials: true
+}));
 app.use(express.json());
 // Webhook-Endpunkt benötigt raw body für Signature-Verifizierung
 app.use('/api/webhooks/calendly', express.raw({ type: 'application/json' }));
