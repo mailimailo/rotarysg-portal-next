@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { getSpeakers, getLunches, createSpeakerRequest, getSpeakerRequests, updateSpeakerRequest, generateCalendlyLinks } from '../api'
+import CalendlyIntegration from './CalendlyIntegration'
 import './SpeakerRequest.css'
 
 function SpeakerRequest() {
@@ -15,6 +16,8 @@ function SpeakerRequest() {
   const [showCompleted, setShowCompleted] = useState(false)
   const [showCalendlyModal, setShowCalendlyModal] = useState(false)
   const [calendlyData, setCalendlyData] = useState(null)
+  const [showCalendlyIntegration, setShowCalendlyIntegration] = useState(false)
+  const [selectedRequestForCalendly, setSelectedRequestForCalendly] = useState(null)
   const [formData, setFormData] = useState({
     speaker_id: '',
     lunch_ids: [],
@@ -216,6 +219,15 @@ Rotary Club St.Gallen`
                       <div className="tools-buttons">
                         <button 
                           className="btn btn-primary btn-small"
+                          onClick={() => {
+                            setSelectedRequestForCalendly(request.id)
+                            setShowCalendlyIntegration(true)
+                          }}
+                        >
+                          📅 Calendly (Automatisch)
+                        </button>
+                        <button 
+                          className="btn btn-secondary btn-small"
                           onClick={async () => {
                             try {
                               const response = await generateCalendlyLinks(request.id)
@@ -227,7 +239,7 @@ Rotary Club St.Gallen`
                             }
                           }}
                         >
-                          📅 Calendly/Doodle/Google Links
+                          🔗 Doodle/Google (Manuell)
                         </button>
                       </div>
                     </div>
@@ -651,6 +663,29 @@ Rotary Club St.Gallen`
                 Fertig
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Calendly Integration Modal */}
+      {showCalendlyIntegration && selectedRequestForCalendly && (
+        <div className="modal-overlay" onClick={() => { setShowCalendlyIntegration(false); setSelectedRequestForCalendly(null); }}>
+          <div className="modal modal-large" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Calendly Integration</h2>
+              <button className="close-btn" onClick={() => { setShowCalendlyIntegration(false); setSelectedRequestForCalendly(null); }}>
+                ×
+              </button>
+            </div>
+            
+            <CalendlyIntegration 
+              requestId={selectedRequestForCalendly}
+              onClose={() => {
+                setShowCalendlyIntegration(false)
+                setSelectedRequestForCalendly(null)
+                loadData()
+              }}
+            />
           </div>
         </div>
       )}

@@ -12,6 +12,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'rotary-secret-key-change-in-produc
 
 app.use(cors());
 app.use(express.json());
+// Webhook-Endpunkt benötigt raw body für Signature-Verifizierung
+app.use('/api/webhooks/calendly', express.raw({ type: 'application/json' }));
 
 // Root Endpoint (muss vor anderen Routes sein)
 app.get('/', (req, res) => {
