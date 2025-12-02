@@ -1029,6 +1029,30 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', service: 'rotary-portal-backend' });
 });
 
+// Database Test Endpoint
+app.get('/api/test-db', authenticateToken, async (req, res) => {
+  try {
+    const testQuery = dbType === 'postgres'
+      ? 'SELECT COUNT(*) as count FROM speakers'
+      : 'SELECT COUNT(*) as count FROM speakers';
+    
+    const result = await dbGet(testQuery);
+    res.json({ 
+      status: 'ok', 
+      dbType,
+      speakersCount: result?.count || 0,
+      message: 'Datenbank-Verbindung erfolgreich'
+    });
+  } catch (err) {
+    res.status(500).json({ 
+      status: 'error', 
+      dbType,
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  }
+});
+
 // ========== CALENDLY INTEGRATION ==========
 const axios = require('axios');
 
