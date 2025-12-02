@@ -26,7 +26,11 @@ api.interceptors.request.use(
 
 // Login
 export const login = async (username, password) => {
-  const response = await axios.post(`${API_URL}/login`, { username, password })
+  // Debug: Log API URL
+  console.log('API_URL:', API_URL)
+  const loginUrl = `${API_URL}/login`
+  console.log('Login URL:', loginUrl)
+  const response = await axios.post(loginUrl, { username, password })
   return response.data
 }
 
