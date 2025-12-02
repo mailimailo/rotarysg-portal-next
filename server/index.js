@@ -1,9 +1,9 @@
 const express = require('express');
 const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const { db, dbType, dbGet, dbAll, dbRun } = require('./db');
 require('dotenv').config();
 
 const app = express();
@@ -37,19 +37,117 @@ app.get('/', (req, res) => {
   });
 });
 
-// Datenbank initialisieren
-// Verwende persistenten Speicher auf Railway (Volume) oder lokalen Pfad
-const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'rotary.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('❌ Datenbank-Fehler:', err.message);
-  } else {
-    console.log('✅ Datenbank verbunden:', dbPath);
-  }
-});
-
 // Datenbank-Schema erstellen
-db.serialize(() => {
+async function initDatabase() {
+  if (dbType === 'postgres') {
+    // PostgreSQL Schema
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'user',
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS speakers (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT,
+        phone TEXT,
+        company TEXT,
+        topic TEXT,
+        bio TEXT,
+        status TEXT DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS lunches (
+        id SERIAL PRIMARY KEY,
+        date TIMESTAMP NOT NULL,
+        location TEXT,
+        title TEXT,
+        description TEXT,
+        status TEXT DEFAULT 'planned',
+        speaker_id INTEGER,
+        max_attendees INTEGER,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (speaker_id) REFERENCES speakers(id)
+      )
+    `);
+    
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS invitations (
+        id SERIAL PRIMARY KEY,
+        lunch_id INTEGER NOT NULL,
+        speaker_id INTEGER,
+        email TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        sent_at TIMESTAMP,
+        responded_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (lunch_id) REFERENCES lunches(id),
+        FOREIGN KEY (speaker_id) REFERENCES speakers(id)
+      )
+    `);
+    
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS speaker_requests (
+        id SERIAL PRIMARY KEY,
+        speaker_id INTEGER NOT NULL,
+        token TEXT UNIQUE NOT NULL,
+        status TEXT DEFAULT 'pending',
+        selected_lunch_id INTEGER,
+        message TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        expires_at TIMESTAMP,
+        responded_at TIMESTAMP,
+        FOREIGN KEY (speaker_id) REFERENCES speakers(id),
+        FOREIGN KEY (selected_lunch_id) REFERENCES lunches(id)
+      )
+    `);
+    
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS speaker_request_lunches (
+        id SERIAL PRIMARY KEY,
+        request_id INTEGER NOT NULL,
+        lunch_id INTEGER NOT NULL,
+        FOREIGN KEY (request_id) REFERENCES speaker_requests(id) ON DELETE CASCADE,
+        FOREIGN KEY (lunch_id) REFERENCES lunches(id),
+        UNIQUE(request_id, lunch_id)
+      )
+    `);
+    
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS calendly_integrations (
+        id SERIAL PRIMARY KEY,
+        speaker_request_id INTEGER NOT NULL UNIQUE,
+        calendly_event_uri TEXT,
+        calendly_invitee_uri TEXT,
+        status TEXT DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (speaker_request_id) REFERENCES speaker_requests(id)
+      )
+    `);
+    
+    // Standard-Admin-Benutzer erstellen
+    const defaultPassword = bcrypt.hashSync('admin123', 10);
+    await db.query(`
+      INSERT INTO users (username, password, role) 
+      VALUES ($1, $2, 'admin'), ($3, $4, 'admin')
+      ON CONFLICT (username) DO NOTHING
+    `, ['praesident', defaultPassword, 'programm', defaultPassword]);
+    
+    console.log('✅ PostgreSQL Schema erstellt');
+  } else {
+    // SQLite Schema (lokal)
+    db.serialize(() => {
   // Benutzer-Tabelle
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,11 +241,18 @@ db.serialize(() => {
     FOREIGN KEY (speaker_request_id) REFERENCES speaker_requests(id)
   )`);
 
-  // Standard-Admin-Benutzer erstellen (Passwort: admin123)
-  const defaultPassword = bcrypt.hashSync('admin123', 10);
-  db.run(`INSERT OR IGNORE INTO users (username, password, role) VALUES 
-    ('praesident', ?, 'admin'),
-    ('programm', ?, 'admin')`, [defaultPassword, defaultPassword]);
+      // Standard-Admin-Benutzer erstellen (Passwort: admin123)
+      const defaultPassword = bcrypt.hashSync('admin123', 10);
+      db.run(`INSERT OR IGNORE INTO users (username, password, role) VALUES 
+        ('praesident', ?, 'admin'),
+        ('programm', ?, 'admin')`, [defaultPassword, defaultPassword]);
+    });
+  }
+}
+
+// Datenbank initialisieren
+initDatabase().catch(err => {
+  console.error('❌ Fehler beim Initialisieren der Datenbank:', err);
 });
 
 // Middleware für JWT-Authentifizierung
@@ -170,10 +275,8 @@ const authenticateToken = (req, res, next) => {
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
 
-  db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
-    if (err) {
-      return res.status(500).json({ error: 'Datenbankfehler' });
-    }
+  try {
+    const user = await dbGet('SELECT * FROM users WHERE username = ?', [username]);
 
     if (!user) {
       return res.status(401).json({ error: 'Ungültige Anmeldedaten' });
@@ -191,462 +294,423 @@ app.post('/api/login', async (req, res) => {
     );
 
     res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
-  });
+  } catch (err) {
+    console.error('Login Fehler:', err);
+    return res.status(500).json({ error: 'Datenbankfehler' });
+  }
 });
 
 // ========== SPEAKER ENDPUNKTE ==========
-app.get('/api/speakers', authenticateToken, (req, res) => {
-  db.all('SELECT * FROM speakers ORDER BY created_at DESC', (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+app.get('/api/speakers', authenticateToken, async (req, res) => {
+  try {
+    const rows = await dbAll('SELECT * FROM speakers ORDER BY created_at DESC');
     res.json(rows);
-  });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.get('/api/speakers/:id', authenticateToken, (req, res) => {
-  db.get('SELECT * FROM speakers WHERE id = ?', [req.params.id], (err, row) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+app.get('/api/speakers/:id', authenticateToken, async (req, res) => {
+  try {
+    const row = await dbGet('SELECT * FROM speakers WHERE id = ?', [req.params.id]);
     if (!row) {
       return res.status(404).json({ error: 'Speaker nicht gefunden' });
     }
     res.json(row);
-  });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/speakers', authenticateToken, (req, res) => {
+app.post('/api/speakers', authenticateToken, async (req, res) => {
   const { name, email, phone, company, topic, bio } = req.body;
-
-  db.run(
-    'INSERT INTO speakers (name, email, phone, company, topic, bio) VALUES (?, ?, ?, ?, ?, ?)',
-    [name, email, phone, company, topic, bio],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({ id: this.lastID, name, email, phone, company, topic, bio });
-    }
-  );
+  try {
+    const insertQuery = dbType === 'postgres'
+      ? 'INSERT INTO speakers (name, email, phone, company, topic, bio) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id'
+      : 'INSERT INTO speakers (name, email, phone, company, topic, bio) VALUES (?, ?, ?, ?, ?, ?)';
+    
+    const result = await dbRun(insertQuery, [name, email, phone, company, topic, bio]);
+    const id = result.lastID || result.rows?.[0]?.id;
+    res.json({ id, name, email, phone, company, topic, bio });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.put('/api/speakers/:id', authenticateToken, (req, res) => {
+app.put('/api/speakers/:id', authenticateToken, async (req, res) => {
   const { name, email, phone, company, topic, bio, status } = req.body;
+  try {
+    const updateQuery = dbType === 'postgres' 
+      ? 'UPDATE speakers SET name = $1, email = $2, phone = $3, company = $4, topic = $5, bio = $6, status = $7, updated_at = NOW() WHERE id = $8'
+      : 'UPDATE speakers SET name = ?, email = ?, phone = ?, company = ?, topic = ?, bio = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?';
+    
+    const result = await dbRun(updateQuery, [name, email, phone, company, topic, bio, status, req.params.id]);
 
-  db.run(
-    'UPDATE speakers SET name = ?, email = ?, phone = ?, company = ?, topic = ?, bio = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-    [name, email, phone, company, topic, bio, status, req.params.id],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-
-      // Wenn Status auf "confirmed" geändert wird und es eine offene Anfrage gibt, diese auch aktualisieren
-      if (status === 'confirmed') {
-        db.get(
-          'SELECT id, selected_lunch_id FROM speaker_requests WHERE speaker_id = ? AND status = ?',
-          [req.params.id, 'pending'],
-          (err, request) => {
-            if (!err && request) {
-              // Wenn noch kein Lunch ausgewählt, den ersten verfügbaren nehmen
-              if (!request.selected_lunch_id) {
-                db.get(
-                  `SELECT l.id FROM lunches l
-                   JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
-                   WHERE srl.request_id = ?
-                   ORDER BY l.date ASC
-                   LIMIT 1`,
-                  [request.id],
-                  (err, lunch) => {
-                    if (!err && lunch) {
-                      db.run(
-                        `UPDATE speaker_requests 
-                         SET status = 'accepted', selected_lunch_id = ?, responded_at = CURRENT_TIMESTAMP
-                         WHERE id = ?`,
-                        [lunch.id, request.id]
-                      );
-                      db.run(
-                        'UPDATE lunches SET status = ?, speaker_id = ? WHERE id = ?',
-                        ['confirmed', req.params.id, lunch.id]
-                      );
-                    }
-                  }
-                );
-              }
-            }
-          }
+    // Wenn Status auf "confirmed" geändert wird und es eine offene Anfrage gibt, diese auch aktualisieren
+    if (status === 'confirmed') {
+      const request = await dbGet(
+        'SELECT id, selected_lunch_id FROM speaker_requests WHERE speaker_id = ? AND status = ?',
+        [req.params.id, 'pending']
+      );
+      
+      if (request && !request.selected_lunch_id) {
+        const lunch = await dbGet(
+          `SELECT l.id FROM lunches l
+           JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
+           WHERE srl.request_id = ?
+           ORDER BY l.date ASC
+           LIMIT 1`,
+          [request.id]
         );
-      } else if (status === 'declined') {
-        // Wenn auf "declined" gesetzt, alle offenen Anfragen für diesen Speaker ablehnen
-        db.all(
-          'SELECT id FROM speaker_requests WHERE speaker_id = ? AND status = ?',
-          [req.params.id, 'pending'],
-          (err, requests) => {
-            if (!err && requests.length > 0) {
-              requests.forEach(req => {
-                db.run(
-                  'UPDATE speaker_requests SET status = ?, responded_at = CURRENT_TIMESTAMP WHERE id = ?',
-                  ['declined', req.id]
-                );
-              });
-            }
-          }
-        );
+        
+        if (lunch) {
+          const timestampQuery = dbType === 'postgres' ? 'NOW()' : 'CURRENT_TIMESTAMP';
+          await dbRun(
+            `UPDATE speaker_requests SET status = 'accepted', selected_lunch_id = ?, responded_at = ${timestampQuery} WHERE id = ?`,
+            [lunch.id, request.id]
+          );
+          await dbRun(
+            'UPDATE lunches SET status = ?, speaker_id = ? WHERE id = ?',
+            ['confirmed', req.params.id, lunch.id]
+          );
+        }
       }
-
-      res.json({ message: 'Speaker aktualisiert', changes: this.changes });
+    } else if (status === 'declined') {
+      // Wenn auf "declined" gesetzt, alle offenen Anfragen für diesen Speaker ablehnen
+      const requests = await dbAll(
+        'SELECT id FROM speaker_requests WHERE speaker_id = ? AND status = ?',
+        [req.params.id, 'pending']
+      );
+      
+      if (requests.length > 0) {
+        const timestampQuery = dbType === 'postgres' ? 'NOW()' : 'CURRENT_TIMESTAMP';
+        for (const reqItem of requests) {
+          await dbRun(
+            `UPDATE speaker_requests SET status = ?, responded_at = ${timestampQuery} WHERE id = ?`,
+            ['declined', reqItem.id]
+          );
+        }
+      }
     }
-  );
+
+    res.json({ message: 'Speaker aktualisiert', changes: result.changes });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.delete('/api/speakers/:id', authenticateToken, (req, res) => {
-  db.run('DELETE FROM speakers WHERE id = ?', [req.params.id], function(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.json({ message: 'Speaker gelöscht', changes: this.changes });
-  });
+app.delete('/api/speakers/:id', authenticateToken, async (req, res) => {
+  try {
+    const result = await dbRun('DELETE FROM speakers WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Speaker gelöscht', changes: result.changes });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== LUNCHES ENDPUNKTE ==========
-app.get('/api/lunches', authenticateToken, (req, res) => {
-  const query = `
-    SELECT l.*, s.name as speaker_name, s.email as speaker_email
-    FROM lunches l
-    LEFT JOIN speakers s ON l.speaker_id = s.id
-    ORDER BY l.date ASC
-  `;
-  
-  db.all(query, (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+app.get('/api/lunches', authenticateToken, async (req, res) => {
+  try {
+    const query = `
+      SELECT l.*, s.name as speaker_name, s.email as speaker_email
+      FROM lunches l
+      LEFT JOIN speakers s ON l.speaker_id = s.id
+      ORDER BY l.date ASC
+    `;
+    const rows = await dbAll(query);
     res.json(rows);
-  });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.get('/api/lunches/:id', authenticateToken, (req, res) => {
-  const query = `
-    SELECT l.*, s.name as speaker_name, s.email as speaker_email, s.phone as speaker_phone
-    FROM lunches l
-    LEFT JOIN speakers s ON l.speaker_id = s.id
-    WHERE l.id = ?
-  `;
-  
-  db.get(query, [req.params.id], (err, row) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+app.get('/api/lunches/:id', authenticateToken, async (req, res) => {
+  try {
+    const query = `
+      SELECT l.*, s.name as speaker_name, s.email as speaker_email, s.phone as speaker_phone
+      FROM lunches l
+      LEFT JOIN speakers s ON l.speaker_id = s.id
+      WHERE l.id = ?
+    `;
+    const row = await dbGet(query, [req.params.id]);
     if (!row) {
       return res.status(404).json({ error: 'Lunch nicht gefunden' });
     }
     res.json(row);
-  });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/lunches', authenticateToken, (req, res) => {
+app.post('/api/lunches', authenticateToken, async (req, res) => {
   const { date, location, title, description, speaker_id, max_attendees, status } = req.body;
-
-  db.run(
-    'INSERT INTO lunches (date, location, title, description, speaker_id, max_attendees, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [date, location, title, description, speaker_id || null, max_attendees, status || 'planned'],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({ 
-        id: this.lastID, 
-        date, location, title, description, speaker_id, max_attendees, status 
-      });
-    }
-  );
+  try {
+    const insertQuery = dbType === 'postgres'
+      ? 'INSERT INTO lunches (date, location, title, description, speaker_id, max_attendees, status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id'
+      : 'INSERT INTO lunches (date, location, title, description, speaker_id, max_attendees, status) VALUES (?, ?, ?, ?, ?, ?, ?)';
+    
+    const result = await dbRun(insertQuery, [date, location, title, description, speaker_id || null, max_attendees, status || 'planned']);
+    const id = result.lastID || result.rows?.[0]?.id;
+    res.json({ 
+      id, 
+      date, location, title, description, speaker_id, max_attendees, status 
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.put('/api/lunches/:id', authenticateToken, (req, res) => {
+app.put('/api/lunches/:id', authenticateToken, async (req, res) => {
   const { date, location, title, description, speaker_id, max_attendees, status } = req.body;
-
-  db.run(
-    'UPDATE lunches SET date = ?, location = ?, title = ?, description = ?, speaker_id = ?, max_attendees = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-    [date, location, title, description, speaker_id || null, max_attendees, status, req.params.id],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({ message: 'Lunch aktualisiert', changes: this.changes });
-    }
-  );
+  try {
+    const timestampQuery = dbType === 'postgres' ? 'NOW()' : 'CURRENT_TIMESTAMP';
+    const updateQuery = dbType === 'postgres'
+      ? `UPDATE lunches SET date = $1, location = $2, title = $3, description = $4, speaker_id = $5, max_attendees = $6, status = $7, updated_at = NOW() WHERE id = $8`
+      : `UPDATE lunches SET date = ?, location = ?, title = ?, description = ?, speaker_id = ?, max_attendees = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+    
+    const result = await dbRun(updateQuery, [date, location, title, description, speaker_id || null, max_attendees, status, req.params.id]);
+    res.json({ message: 'Lunch aktualisiert', changes: result.changes });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.delete('/api/lunches/:id', authenticateToken, (req, res) => {
-  db.run('DELETE FROM lunches WHERE id = ?', [req.params.id], function(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.json({ message: 'Lunch gelöscht', changes: this.changes });
-  });
+app.delete('/api/lunches/:id', authenticateToken, async (req, res) => {
+  try {
+    const result = await dbRun('DELETE FROM lunches WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Lunch gelöscht', changes: result.changes });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== EINLADUNGEN ENDPUNKTE ==========
-app.get('/api/invitations', authenticateToken, (req, res) => {
-  const query = `
-    SELECT i.*, l.date as lunch_date, l.title as lunch_title, s.name as speaker_name
-    FROM invitations i
-    LEFT JOIN lunches l ON i.lunch_id = l.id
-    LEFT JOIN speakers s ON i.speaker_id = s.id
-    ORDER BY l.date DESC
-  `;
-  
-  db.all(query, (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+app.get('/api/invitations', authenticateToken, async (req, res) => {
+  try {
+    const query = `
+      SELECT i.*, l.date as lunch_date, l.title as lunch_title, s.name as speaker_name
+      FROM invitations i
+      LEFT JOIN lunches l ON i.lunch_id = l.id
+      LEFT JOIN speakers s ON i.speaker_id = s.id
+      ORDER BY l.date DESC
+    `;
+    const rows = await dbAll(query);
     res.json(rows);
-  });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/invitations', authenticateToken, (req, res) => {
+app.post('/api/invitations', authenticateToken, async (req, res) => {
   const { lunch_id, speaker_id, email } = req.body;
-
-  db.run(
-    'INSERT INTO invitations (lunch_id, speaker_id, email, sent_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
-    [lunch_id, speaker_id, email],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({ 
-        id: this.lastID, 
-        lunch_id, speaker_id, email, 
-        status: 'pending',
-        sent_at: new Date().toISOString()
-      });
-    }
-  );
+  try {
+    const timestampQuery = dbType === 'postgres' ? 'NOW()' : 'CURRENT_TIMESTAMP';
+    const insertQuery = dbType === 'postgres'
+      ? `INSERT INTO invitations (lunch_id, speaker_id, email, sent_at) VALUES ($1, $2, $3, NOW()) RETURNING id`
+      : `INSERT INTO invitations (lunch_id, speaker_id, email, sent_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)`;
+    
+    const result = await dbRun(insertQuery, [lunch_id, speaker_id, email]);
+    const id = result.lastID || result.rows?.[0]?.id;
+    res.json({ 
+      id, 
+      lunch_id, speaker_id, email, 
+      status: 'pending',
+      sent_at: new Date().toISOString()
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.put('/api/invitations/:id', authenticateToken, (req, res) => {
+app.put('/api/invitations/:id', authenticateToken, async (req, res) => {
   const { status } = req.body;
-
-  db.run(
-    'UPDATE invitations SET status = ?, responded_at = CURRENT_TIMESTAMP WHERE id = ?',
-    [status, req.params.id],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({ message: 'Einladung aktualisiert', changes: this.changes });
-    }
-  );
+  try {
+    const timestampQuery = dbType === 'postgres' ? 'NOW()' : 'CURRENT_TIMESTAMP';
+    const updateQuery = dbType === 'postgres'
+      ? `UPDATE invitations SET status = $1, responded_at = NOW() WHERE id = $2`
+      : `UPDATE invitations SET status = ?, responded_at = CURRENT_TIMESTAMP WHERE id = ?`;
+    
+    const result = await dbRun(updateQuery, [status, req.params.id]);
+    res.json({ message: 'Einladung aktualisiert', changes: result.changes });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== KALENDER ENDPUNKTE ==========
-app.get('/api/calendar', authenticateToken, (req, res) => {
-  const { start, end } = req.query;
-  
-  let query = `
-    SELECT l.id, l.date, l.title, l.location, l.status, s.name as speaker_name
-    FROM lunches l
-    LEFT JOIN speakers s ON l.speaker_id = s.id
-  `;
-  
-  const params = [];
-  if (start && end) {
-    query += ' WHERE l.date >= ? AND l.date <= ?';
-    params.push(start, end);
-  }
-  
-  query += ' ORDER BY l.date ASC';
-  
-  db.all(query, params, (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
+app.get('/api/calendar', authenticateToken, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    
+    let query = `
+      SELECT l.id, l.date, l.title, l.location, l.status, s.name as speaker_name
+      FROM lunches l
+      LEFT JOIN speakers s ON l.speaker_id = s.id
+    `;
+    
+    const params = [];
+    if (start && end) {
+      query += ' WHERE l.date >= ? AND l.date <= ?';
+      params.push(start, end);
     }
+    
+    query += ' ORDER BY l.date ASC';
+    
+    const rows = await dbAll(query, params);
     res.json(rows);
-  });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== SPEAKER-ANFRAGEN ENDPUNKTE ==========
 const crypto = require('crypto');
 
 // Mehrere Lunches für einen Speaker anfragen
-app.post('/api/speaker-requests', authenticateToken, (req, res) => {
+app.post('/api/speaker-requests', authenticateToken, async (req, res) => {
   const { speaker_id, lunch_ids, message } = req.body;
 
   if (!speaker_id || !lunch_ids || !Array.isArray(lunch_ids) || lunch_ids.length === 0) {
     return res.status(400).json({ error: 'Speaker-ID und mindestens ein Lunch-Termin erforderlich' });
   }
 
-  // Token generieren
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 30); // 30 Tage gültig
+  try {
+    // Token generieren
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 30); // 30 Tage gültig
 
-  // Speaker-Status auf "angefragt" setzen
-  db.run('UPDATE speakers SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
-    ['angefragt', speaker_id], (err) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+    // Speaker-Status auf "angefragt" setzen
+    const timestampQuery = dbType === 'postgres' ? 'NOW()' : 'CURRENT_TIMESTAMP';
+    await dbRun(
+      `UPDATE speakers SET status = ?, updated_at = ${timestampQuery} WHERE id = ?`,
+      ['angefragt', speaker_id]
+    );
 
     // Speaker-Anfrage erstellen
-    db.run(
-      `INSERT INTO speaker_requests (speaker_id, token, status, message, expires_at) 
-       VALUES (?, ?, 'pending', ?, ?)`,
-      [speaker_id, token, message || '', expiresAt.toISOString()],
-      function(err) {
-        if (err) {
-          return res.status(500).json({ error: err.message });
-        }
+    const insertQuery = dbType === 'postgres'
+      ? `INSERT INTO speaker_requests (speaker_id, token, status, message, expires_at) VALUES ($1, $2, 'pending', $3, $4) RETURNING id`
+      : `INSERT INTO speaker_requests (speaker_id, token, status, message, expires_at) VALUES (?, ?, 'pending', ?, ?)`;
+    
+    const insertResult = await dbRun(insertQuery, [speaker_id, token, message || '', expiresAt.toISOString()]);
+    const requestId = insertResult.lastID || insertResult.rows?.[0]?.id;
 
-        const requestId = this.lastID;
+    // Lunches zur Anfrage hinzufügen
+    for (const lunchId of lunch_ids) {
+      await dbRun(
+        'INSERT INTO speaker_request_lunches (request_id, lunch_id) VALUES (?, ?)',
+        [requestId, lunchId]
+      );
+      // Lunches-Status auf "angefragt" setzen
+      await dbRun('UPDATE lunches SET status = ? WHERE id = ?', ['angefragt', lunchId]);
+    }
 
-        // Lunches zur Anfrage hinzufügen
-        const stmt = db.prepare('INSERT INTO speaker_request_lunches (request_id, lunch_id) VALUES (?, ?)');
-        let inserted = 0;
-        let errors = 0;
-
-        lunch_ids.forEach((lunchId) => {
-          stmt.run([requestId, lunchId], (err) => {
-            if (err) {
-              errors++;
-            } else {
-              inserted++;
-            }
-
-            // Lunches-Status auf "angefragt" setzen
-            db.run('UPDATE lunches SET status = ? WHERE id = ?', ['angefragt', lunchId]);
-
-            if (inserted + errors === lunch_ids.length) {
-              stmt.finalize();
-              if (errors > 0) {
-                return res.status(500).json({ error: 'Fehler beim Hinzufügen einiger Termine' });
-              }
-
-              // Vollständige Anfrage mit Lunches zurückgeben
-              db.get(
-                `SELECT sr.*, s.name as speaker_name, s.email as speaker_email
-                 FROM speaker_requests sr
-                 JOIN speakers s ON sr.speaker_id = s.id
-                 WHERE sr.id = ?`,
-                [requestId],
-                (err, request) => {
-                  if (err) {
-                    return res.status(500).json({ error: err.message });
-                  }
-
-                  db.all(
-                    `SELECT l.* FROM lunches l
-                     JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
-                     WHERE srl.request_id = ?`,
-                    [requestId],
-                    (err, lunches) => {
-                      if (err) {
-                        return res.status(500).json({ error: err.message });
-                      }
-
-                      res.json({
-                        ...request,
-                        lunches,
-                        selection_url: `${req.protocol}://${req.get('host')}/speaker-select/${token}`
-                      });
-                    }
-                  );
-                }
-              );
-            }
-          });
-        });
-      }
+    // Vollständige Anfrage mit Lunches zurückgeben
+    const request = await dbGet(
+      `SELECT sr.*, s.name as speaker_name, s.email as speaker_email
+       FROM speaker_requests sr
+       JOIN speakers s ON sr.speaker_id = s.id
+       WHERE sr.id = ?`,
+      [requestId]
     );
-  });
+
+    const lunches = await dbAll(
+      `SELECT l.* FROM lunches l
+       JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
+       WHERE srl.request_id = ?`,
+      [requestId]
+    );
+
+    res.json({
+      ...request,
+      lunches,
+      selection_url: `${req.protocol}://${req.get('host')}/speaker-select/${token}`
+    });
+  } catch (err) {
+    console.error('Fehler beim Erstellen der Speaker-Anfrage:', err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Alle Anfragen abrufen
-app.get('/api/speaker-requests', authenticateToken, (req, res) => {
-  const query = `
-    SELECT sr.*, s.name as speaker_name, s.email as speaker_email, s.phone as speaker_phone,
-           l.id as selected_lunch_id, l.date as selected_lunch_date, l.title as selected_lunch_title
-    FROM speaker_requests sr
-    JOIN speakers s ON sr.speaker_id = s.id
-    LEFT JOIN lunches l ON sr.selected_lunch_id = l.id
-    ORDER BY sr.created_at DESC
-  `;
+app.get('/api/speaker-requests', authenticateToken, async (req, res) => {
+  try {
+    const query = `
+      SELECT sr.*, s.name as speaker_name, s.email as speaker_email, s.phone as speaker_phone,
+             l.id as selected_lunch_id, l.date as selected_lunch_date, l.title as selected_lunch_title
+      FROM speaker_requests sr
+      JOIN speakers s ON sr.speaker_id = s.id
+      LEFT JOIN lunches l ON sr.selected_lunch_id = l.id
+      ORDER BY sr.created_at DESC
+    `;
 
-  db.all(query, (err, requests) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+    const requests = await dbAll(query);
 
     // Für jede Anfrage die verfügbaren Lunches laden
-    const requestsWithLunches = requests.map((request, index) => {
-      return new Promise((resolve) => {
-        db.all(
-          `SELECT l.* FROM lunches l
-           JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
-           WHERE srl.request_id = ?
-           ORDER BY l.date ASC`,
-          [request.id],
-          (err, lunches) => {
-            if (err) {
-              resolve({ ...request, available_lunches: [] });
-            } else {
-              resolve({ ...request, available_lunches: lunches });
-            }
-          }
-        );
-      });
-    });
+    const requestsWithLunches = await Promise.all(
+      requests.map(async (request) => {
+        try {
+          const lunches = await dbAll(
+            `SELECT l.* FROM lunches l
+             JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
+             WHERE srl.request_id = ?
+             ORDER BY l.date ASC`,
+            [request.id]
+          );
+          return { ...request, available_lunches: lunches };
+        } catch (err) {
+          return { ...request, available_lunches: [] };
+        }
+      })
+    );
 
-    Promise.all(requestsWithLunches).then((results) => {
-      res.json(results);
-    });
-  });
+    res.json(requestsWithLunches);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Öffentliche Route: Anfrage-Details per Token abrufen (für Speaker-Auswahlseite)
-app.get('/api/public/speaker-request/:token', (req, res) => {
+app.get('/api/public/speaker-request/:token', async (req, res) => {
   const { token } = req.params;
 
-  db.get(
-    `SELECT sr.*, s.name as speaker_name, s.email as speaker_email, s.company as speaker_company
-     FROM speaker_requests sr
-     JOIN speakers s ON sr.speaker_id = s.id
-     WHERE sr.token = ? AND sr.status = 'pending' AND sr.expires_at > datetime('now')`,
-    [token],
-    (err, request) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
+  try {
+    const dateCheck = dbType === 'postgres' 
+      ? `sr.expires_at > NOW()`
+      : `sr.expires_at > datetime('now')`;
+    
+    const request = await dbGet(
+      `SELECT sr.*, s.name as speaker_name, s.email as speaker_email, s.company as speaker_company
+       FROM speaker_requests sr
+       JOIN speakers s ON sr.speaker_id = s.id
+       WHERE sr.token = ? AND sr.status = 'pending' AND ${dateCheck}`,
+      [token]
+    );
 
-      if (!request) {
-        return res.status(404).json({ error: 'Anfrage nicht gefunden oder abgelaufen' });
-      }
-
-      // Verfügbare Lunches laden
-      db.all(
-        `SELECT l.* FROM lunches l
-         JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
-         WHERE srl.request_id = ?
-         ORDER BY l.date ASC`,
-        [request.id],
-        (err, lunches) => {
-          if (err) {
-            return res.status(500).json({ error: err.message });
-          }
-
-          res.json({
-            ...request,
-            available_lunches: lunches
-          });
-        }
-      );
+    if (!request) {
+      return res.status(404).json({ error: 'Anfrage nicht gefunden oder abgelaufen' });
     }
-  );
+
+    // Verfügbare Lunches laden
+    const lunches = await dbAll(
+      `SELECT l.* FROM lunches l
+       JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
+       WHERE srl.request_id = ?
+       ORDER BY l.date ASC`,
+      [request.id]
+    );
+
+    res.json({
+      ...request,
+      available_lunches: lunches
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Öffentliche Route: Speaker wählt einen Termin
-app.post('/api/public/speaker-request/:token/select', (req, res) => {
+app.post('/api/public/speaker-request/:token/select', async (req, res) => {
   const { token } = req.params;
   const { lunch_id } = req.body;
 
@@ -654,83 +718,78 @@ app.post('/api/public/speaker-request/:token/select', (req, res) => {
     return res.status(400).json({ error: 'Lunch-ID erforderlich' });
   }
 
-  // Prüfen ob Anfrage gültig ist
-  db.get(
-    `SELECT sr.* FROM speaker_requests sr
-     WHERE sr.token = ? AND sr.status = 'pending' AND sr.expires_at > datetime('now')`,
-    [token],
-    (err, request) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
+  try {
+    // Prüfen ob Anfrage gültig ist
+    const dateCheck = dbType === 'postgres' 
+      ? `sr.expires_at > NOW()`
+      : `sr.expires_at > datetime('now')`;
+    
+    const request = await dbGet(
+      `SELECT sr.* FROM speaker_requests sr
+       WHERE sr.token = ? AND sr.status = 'pending' AND ${dateCheck}`,
+      [token]
+    );
 
-      if (!request) {
-        return res.status(404).json({ error: 'Anfrage nicht gefunden oder abgelaufen' });
-      }
+    if (!request) {
+      return res.status(404).json({ error: 'Anfrage nicht gefunden oder abgelaufen' });
+    }
 
-      // Prüfen ob Lunch in der Anfrage enthalten ist
-      db.get(
-        `SELECT * FROM speaker_request_lunches 
-         WHERE request_id = ? AND lunch_id = ?`,
-        [request.id, lunch_id],
-        (err, link) => {
-          if (err) {
-            return res.status(500).json({ error: err.message });
-          }
+    // Prüfen ob Lunch in der Anfrage enthalten ist
+    const link = await dbGet(
+      `SELECT * FROM speaker_request_lunches 
+       WHERE request_id = ? AND lunch_id = ?`,
+      [request.id, lunch_id]
+    );
 
-          if (!link) {
-            return res.status(400).json({ error: 'Dieser Termin ist nicht in der Anfrage enthalten' });
-          }
+    if (!link) {
+      return res.status(400).json({ error: 'Dieser Termin ist nicht in der Anfrage enthalten' });
+    }
 
-          // Termin auswählen
-          db.run(
-            `UPDATE speaker_requests 
-             SET selected_lunch_id = ?, status = 'accepted', responded_at = CURRENT_TIMESTAMP
-             WHERE id = ?`,
-            [lunch_id, request.id],
-            function(err) {
-              if (err) {
-                return res.status(500).json({ error: err.message });
-              }
+    // Termin auswählen
+    const timestampQuery = dbType === 'postgres' ? 'NOW()' : 'CURRENT_TIMESTAMP';
+    await dbRun(
+      `UPDATE speaker_requests 
+       SET selected_lunch_id = ?, status = 'accepted', responded_at = ${timestampQuery}
+       WHERE id = ?`,
+      [lunch_id, request.id]
+    );
 
-              // Speaker-Status auf "confirmed" setzen
-              db.run(
-                'UPDATE speakers SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                ['confirmed', request.speaker_id]
-              );
+    // Speaker-Status auf "confirmed" setzen
+    const speakerTimestamp = dbType === 'postgres' ? 'NOW()' : 'CURRENT_TIMESTAMP';
+    await dbRun(
+      `UPDATE speakers SET status = ?, updated_at = ${speakerTimestamp} WHERE id = ?`,
+      ['confirmed', request.speaker_id]
+    );
 
-              // Lunch-Status auf "confirmed" setzen und Speaker zuweisen
-              db.run(
-                'UPDATE lunches SET status = ?, speaker_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                ['confirmed', request.speaker_id, lunch_id]
-              );
+    // Lunch-Status auf "confirmed" setzen und Speaker zuweisen
+    await dbRun(
+      `UPDATE lunches SET status = ?, speaker_id = ?, updated_at = ${speakerTimestamp} WHERE id = ?`,
+      ['confirmed', request.speaker_id, lunch_id]
+    );
 
-              // Andere Lunches in dieser Anfrage auf "planned" zurücksetzen
-              db.all(
-                `SELECT lunch_id FROM speaker_request_lunches WHERE request_id = ? AND lunch_id != ?`,
-                [request.id, lunch_id],
-                (err, otherLunches) => {
-                  if (!err && otherLunches.length > 0) {
-                    const otherIds = otherLunches.map(l => l.lunch_id);
-                    const placeholders = otherIds.map(() => '?').join(',');
-                    db.run(
-                      `UPDATE lunches SET status = 'planned', speaker_id = NULL WHERE id IN (${placeholders})`,
-                      otherIds
-                    );
-                  }
-                }
-              );
+    // Andere Lunches in dieser Anfrage auf "planned" zurücksetzen
+    const otherLunches = await dbAll(
+      `SELECT lunch_id FROM speaker_request_lunches WHERE request_id = ? AND lunch_id != ?`,
+      [request.id, lunch_id]
+    );
 
-              res.json({ 
-                message: 'Termin erfolgreich ausgewählt',
-                selected_lunch_id: lunch_id
-              });
-            }
-          );
-        }
+    if (otherLunches.length > 0) {
+      const otherIds = otherLunches.map(l => l.lunch_id);
+      const placeholders = otherIds.map(() => '?').join(',');
+      await dbRun(
+        `UPDATE lunches SET status = 'planned', speaker_id = NULL WHERE id IN (${placeholders})`,
+        otherIds
       );
     }
-  );
+
+    res.json({ 
+      message: 'Termin erfolgreich ausgewählt',
+      selected_lunch_id: lunch_id
+    });
+  } catch (err) {
+    console.error('Fehler beim Auswählen des Termins:', err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Manueller Status-Update für Speaker-Anfrage
@@ -879,60 +938,60 @@ app.put('/api/speaker-requests/:id', authenticateToken, (req, res) => {
 });
 
 // Öffentliche Route: Speaker lehnt alle Termine ab
-app.post('/api/public/speaker-request/:token/decline', (req, res) => {
+app.post('/api/public/speaker-request/:token/decline', async (req, res) => {
   const { token } = req.params;
 
-  db.get(
-    `SELECT sr.* FROM speaker_requests sr
-     WHERE sr.token = ? AND sr.status = 'pending' AND sr.expires_at > datetime('now')`,
-    [token],
-    (err, request) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
+  try {
+    const dateCheck = dbType === 'postgres' 
+      ? `sr.expires_at > NOW()`
+      : `sr.expires_at > datetime('now')`;
+    
+    const request = await dbGet(
+      `SELECT sr.* FROM speaker_requests sr
+       WHERE sr.token = ? AND sr.status = 'pending' AND ${dateCheck}`,
+      [token]
+    );
 
-      if (!request) {
-        return res.status(404).json({ error: 'Anfrage nicht gefunden oder abgelaufen' });
-      }
+    if (!request) {
+      return res.status(404).json({ error: 'Anfrage nicht gefunden oder abgelaufen' });
+    }
 
-      // Status auf "declined" setzen
-      db.run(
-        `UPDATE speaker_requests 
-         SET status = 'declined', responded_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [request.id],
-        function(err) {
-          if (err) {
-            return res.status(500).json({ error: err.message });
-          }
+    // Status auf "declined" setzen
+    const timestampQuery = dbType === 'postgres' ? 'NOW()' : 'CURRENT_TIMESTAMP';
+    await dbRun(
+      `UPDATE speaker_requests 
+       SET status = 'declined', responded_at = ${timestampQuery}
+       WHERE id = ?`,
+      [request.id]
+    );
 
-          // Speaker-Status auf "declined" setzen
-          db.run(
-            'UPDATE speakers SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            ['declined', request.speaker_id]
-          );
+    // Speaker-Status auf "declined" setzen
+    const updateTimestamp = dbType === 'postgres' ? 'NOW()' : 'CURRENT_TIMESTAMP';
+    await dbRun(
+      `UPDATE speakers SET status = ?, updated_at = ${updateTimestamp} WHERE id = ?`,
+      ['declined', request.speaker_id]
+    );
 
-          // Alle Lunches in dieser Anfrage auf "planned" zurücksetzen
-          db.all(
-            `SELECT lunch_id FROM speaker_request_lunches WHERE request_id = ?`,
-            [request.id],
-            (err, lunches) => {
-              if (!err && lunches.length > 0) {
-                const lunchIds = lunches.map(l => l.lunch_id);
-                const placeholders = lunchIds.map(() => '?').join(',');
-                db.run(
-                  `UPDATE lunches SET status = 'planned', speaker_id = NULL WHERE id IN (${placeholders})`,
-                  lunchIds
-                );
-              }
-            }
-          );
+    // Alle Lunches in dieser Anfrage auf "planned" zurücksetzen
+    const lunches = await dbAll(
+      `SELECT lunch_id FROM speaker_request_lunches WHERE request_id = ?`,
+      [request.id]
+    );
 
-          res.json({ message: 'Anfrage abgelehnt' });
-        }
+    if (lunches.length > 0) {
+      const lunchIds = lunches.map(l => l.lunch_id);
+      const placeholders = lunchIds.map(() => '?').join(',');
+      await dbRun(
+        `UPDATE lunches SET status = 'planned', speaker_id = NULL WHERE id IN (${placeholders})`,
+        lunchIds
       );
     }
-  );
+
+    res.json({ message: 'Anfrage abgelehnt' });
+  } catch (err) {
+    console.error('Fehler beim Ablehnen der Anfrage:', err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Health Check Endpoint (für Render.com)
@@ -1004,69 +1063,63 @@ app.post('/api/speaker-requests/:id/create-calendly', authenticateToken, async (
     return res.status(400).json({ error: 'Event Type URI erforderlich' });
   }
 
-  db.get(
-    `SELECT sr.*, s.name as speaker_name, s.email as speaker_email
-     FROM speaker_requests sr
-     JOIN speakers s ON sr.speaker_id = s.id
-     WHERE sr.id = ?`,
-    [requestId],
-    async (err, request) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
+  try {
+    const request = await dbGet(
+      `SELECT sr.*, s.name as speaker_name, s.email as speaker_email
+       FROM speaker_requests sr
+       JOIN speakers s ON sr.speaker_id = s.id
+       WHERE sr.id = ?`,
+      [requestId]
+    );
 
-      if (!request) {
-        return res.status(404).json({ error: 'Anfrage nicht gefunden' });
-      }
-
-      // Verfügbare Lunches laden
-      db.all(
-        `SELECT l.* FROM lunches l
-         JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
-         WHERE srl.request_id = ?
-         ORDER BY l.date ASC`,
-        [requestId],
-        async (err, lunches) => {
-          if (err) {
-            return res.status(500).json({ error: err.message });
-          }
-
-          try {
-            // Calendly Scheduling Link erstellen
-            const schedulingLink = await createCalendlySchedulingLink(event_type_uri, lunches, request);
-            
-            // Integration speichern
-            db.run(
-              `INSERT INTO calendly_integrations (speaker_request_id, calendly_event_uri, status)
-               VALUES (?, ?, 'pending')
-               ON CONFLICT(speaker_request_id) DO UPDATE SET
-                 calendly_event_uri = excluded.calendly_event_uri,
-                 status = 'pending'`,
-              [requestId, schedulingLink.event_uri || event_type_uri],
-              function(err) {
-                if (err) {
-                  console.error('Fehler beim Speichern der Integration:', err);
-                }
-              }
-            );
-
-            res.json({
-              success: true,
-              scheduling_link: schedulingLink.booking_url || `https://calendly.com/${event_type_uri.split('/').pop()}`,
-              event_uri: schedulingLink.event_uri || event_type_uri,
-              message: 'Calendly Link erfolgreich erstellt'
-            });
-          } catch (error) {
-            console.error('Calendly Fehler:', error.response?.data || error.message);
-            res.status(500).json({ 
-              error: 'Fehler beim Erstellen des Calendly Links',
-              details: error.response?.data || error.message
-            });
-          }
-        }
-      );
+    if (!request) {
+      return res.status(404).json({ error: 'Anfrage nicht gefunden' });
     }
-  );
+
+    // Verfügbare Lunches laden
+    const lunches = await dbAll(
+      `SELECT l.* FROM lunches l
+       JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
+       WHERE srl.request_id = ?
+       ORDER BY l.date ASC`,
+      [requestId]
+    );
+
+    try {
+      // Calendly Scheduling Link erstellen
+      const schedulingLink = await createCalendlySchedulingLink(event_type_uri, lunches, request);
+      
+      // Integration speichern
+      const insertQuery = dbType === 'postgres'
+        ? `INSERT INTO calendly_integrations (speaker_request_id, calendly_event_uri, status)
+           VALUES ($1, $2, 'pending')
+           ON CONFLICT(speaker_request_id) DO UPDATE SET
+             calendly_event_uri = EXCLUDED.calendly_event_uri,
+             status = 'pending'`
+        : `INSERT INTO calendly_integrations (speaker_request_id, calendly_event_uri, status)
+           VALUES (?, ?, 'pending')
+           ON CONFLICT(speaker_request_id) DO UPDATE SET
+             calendly_event_uri = excluded.calendly_event_uri,
+             status = 'pending'`;
+      
+      await dbRun(insertQuery, [requestId, schedulingLink.event_uri || event_type_uri]);
+
+      res.json({
+        success: true,
+        scheduling_link: schedulingLink.booking_url || `https://calendly.com/${event_type_uri.split('/').pop()}`,
+        event_uri: schedulingLink.event_uri || event_type_uri,
+        message: 'Calendly Link erfolgreich erstellt'
+      });
+    } catch (error) {
+      console.error('Calendly Fehler:', error.response?.data || error.message);
+      res.status(500).json({ 
+        error: 'Fehler beim Erstellen des Calendly Links',
+        details: error.response?.data || error.message
+      });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Calendly Scheduling Link erstellen
@@ -1121,174 +1174,180 @@ app.post('/api/webhooks/calendly', (req, res) => {
 });
 
 // Calendly Buchung verarbeiten
-function handleCalendlyBooking(data) {
-  const eventUri = data.event;
-  const invitee = data.invitee || {};
-  const inviteeEmail = invitee.email;
-  const scheduledEvent = invitee.scheduled_event || data.scheduled_event || {};
-  const scheduledTime = scheduledEvent.start_time;
+async function handleCalendlyBooking(data) {
+  try {
+    const eventUri = data.event || data.event_type;
+    const invitee = data.invitee || {};
+    const inviteeEmail = invitee.email;
+    const scheduledEvent = invitee.scheduled_event || data.scheduled_event || {};
+    const scheduledTime = scheduledEvent.start_time;
 
-  // Finde die zugehörige Anfrage über Event URI
-  db.get(
-    `SELECT ci.*, sr.speaker_id, sr.id as request_id
-     FROM calendly_integrations ci
-     JOIN speaker_requests sr ON ci.speaker_request_id = sr.id
-     WHERE ci.calendly_event_uri = ?`,
-    [eventUri],
-    (err, integration) => {
-      if (err || !integration) {
-        console.error('Integration nicht gefunden für Event:', eventUri);
-        return;
-      }
+    // Finde die zugehörige Anfrage über Event URI
+    const integration = await dbGet(
+      `SELECT ci.*, sr.speaker_id, sr.id as request_id
+       FROM calendly_integrations ci
+       JOIN speaker_requests sr ON ci.speaker_request_id = sr.id
+       WHERE ci.calendly_event_uri = ?`,
+      [eventUri]
+    );
 
-      // Finde den passenden Lunch basierend auf der gebuchten Zeit
-      if (scheduledTime) {
-        const bookedDate = new Date(scheduledTime);
-        
-        db.all(
-          `SELECT l.* FROM lunches l
-           JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
-           WHERE srl.request_id = ?
-           ORDER BY ABS(julianday(l.date) - julianday(?)) ASC
-           LIMIT 1`,
-          [integration.speaker_request_id, bookedDate.toISOString()],
-          (err, lunches) => {
-            if (!err && lunches.length > 0) {
-              const selectedLunch = lunches[0];
-              
-              // Update der Anfrage
-              db.run(
-                `UPDATE speaker_requests 
-                 SET selected_lunch_id = ?, status = 'accepted', responded_at = CURRENT_TIMESTAMP
-                 WHERE id = ?`,
-                [selectedLunch.id, integration.speaker_request_id]
-              );
-
-              // Update Lunch
-              db.run(
-                `UPDATE lunches SET status = ?, speaker_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-                ['confirmed', integration.speaker_id, selectedLunch.id]
-              );
-
-              // Update Speaker
-              db.run(
-                `UPDATE speakers SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-                ['confirmed', integration.speaker_id]
-              );
-
-              // Update Integration
-              db.run(
-                `UPDATE calendly_integrations SET calendly_invitee_uri = ?, status = 'completed' WHERE id = ?`,
-                [invitee.uri || '', integration.id]
-              );
-
-              console.log(`✅ Calendly Buchung verarbeitet: Lunch ${selectedLunch.id} für Speaker ${integration.speaker_id}`);
-            }
-          }
-        );
-      }
+    if (!integration) {
+      console.error('Integration nicht gefunden für Event:', eventUri);
+      return;
     }
-  );
-}
 
-// Calendly Stornierung verarbeiten
-function handleCalendlyCancellation(data) {
-  const eventUri = data.event;
-  const invitee = data.invitee || {};
-
-  db.get(
-    `SELECT * FROM calendly_integrations WHERE calendly_event_uri = ? OR calendly_invitee_uri = ?`,
-    [eventUri, invitee.uri],
-    (err, integration) => {
-      if (!err && integration) {
-        // Setze Status zurück
-        db.run(
-          `UPDATE speaker_requests SET status = 'pending', selected_lunch_id = NULL WHERE id = ?`,
-          [integration.speaker_request_id]
-        );
-      }
-    }
-  );
-}
-
-// Legacy: Template Links für manuelle Erstellung
-app.post('/api/speaker-requests/:id/generate-calendly', authenticateToken, (req, res) => {
-  const requestId = req.params.id;
-
-  db.get(
-    `SELECT sr.*, s.name as speaker_name, s.email as speaker_email
-     FROM speaker_requests sr
-     JOIN speakers s ON sr.speaker_id = s.id
-     WHERE sr.id = ?`,
-    [requestId],
-    (err, request) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-
-      if (!request) {
-        return res.status(404).json({ error: 'Anfrage nicht gefunden' });
-      }
-
-      // Verfügbare Lunches laden
-      db.all(
+    // Finde den passenden Lunch basierend auf der gebuchten Zeit
+    if (scheduledTime) {
+      const bookedDate = new Date(scheduledTime);
+      
+      // PostgreSQL verwendet EXTRACT(EPOCH FROM ...) statt julianday
+      const dateDiffQuery = dbType === 'postgres'
+        ? `ABS(EXTRACT(EPOCH FROM (l.date - ?::timestamp)))`
+        : `ABS(julianday(l.date) - julianday(?))`;
+      
+      const lunches = await dbAll(
         `SELECT l.* FROM lunches l
          JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
          WHERE srl.request_id = ?
-         ORDER BY l.date ASC`,
-        [requestId],
-        (err, lunches) => {
-          if (err) {
-            return res.status(500).json({ error: err.message });
-          }
+         ORDER BY ${dateDiffQuery} ASC
+         LIMIT 1`,
+        [integration.speaker_request_id, bookedDate.toISOString()]
+      );
 
-          // Calendly Link generieren
-          // Format: https://calendly.com/username/event-type?month=2026-07&date=2026-07-06
-          // Für einfache Integration: Wir erstellen einen Doodle-ähnlichen Link oder
-          // verwenden Calendly's "Collective" Feature mit mehreren Zeiten
-          
-          const calendlyLink = generateCalendlyLink(lunches, request);
-          
-          res.json({
-            calendly_link: calendlyLink,
-            alternative_links: {
-              google_calendar: generateGoogleCalendarLink(lunches),
-              doodle: generateDoodleLink(lunches, request)
-            },
-            instructions: {
-              calendly: "Erstellen Sie ein Calendly Event mit diesen Terminen und teilen Sie den Link",
-              google: "Erstellen Sie einen Google Calendar 'Find a time' Link",
-              doodle: "Erstellen Sie eine Doodle-Umfrage mit diesen Terminen"
-            }
-          });
-        }
+      if (lunches.length > 0) {
+        const selectedLunch = lunches[0];
+        
+        const timestampQuery = dbType === 'postgres' ? 'NOW()' : 'CURRENT_TIMESTAMP';
+        
+        // Update der Anfrage
+        await dbRun(
+          `UPDATE speaker_requests 
+           SET selected_lunch_id = ?, status = 'accepted', responded_at = ${timestampQuery}
+           WHERE id = ?`,
+          [selectedLunch.id, integration.speaker_request_id]
+        );
+
+        // Update Lunch
+        await dbRun(
+          `UPDATE lunches SET status = ?, speaker_id = ?, updated_at = ${timestampQuery} WHERE id = ?`,
+          ['confirmed', integration.speaker_id, selectedLunch.id]
+        );
+
+        // Update Speaker
+        await dbRun(
+          `UPDATE speakers SET status = ?, updated_at = ${timestampQuery} WHERE id = ?`,
+          ['confirmed', integration.speaker_id]
+        );
+
+        // Update Integration
+        await dbRun(
+          `UPDATE calendly_integrations SET calendly_invitee_uri = ?, status = 'completed' WHERE id = ?`,
+          [invitee.uri || '', integration.id]
+        );
+
+        console.log(`✅ Calendly Buchung verarbeitet: Lunch ${selectedLunch.id} für Speaker ${integration.speaker_id}`);
+      }
+    }
+  } catch (err) {
+    console.error('Fehler beim Verarbeiten der Calendly Buchung:', err);
+  }
+}
+
+// Calendly Stornierung verarbeiten
+async function handleCalendlyCancellation(data) {
+  try {
+    const eventUri = data.event;
+    const invitee = data.invitee || {};
+
+    const integration = await dbGet(
+      `SELECT * FROM calendly_integrations WHERE calendly_event_uri = ? OR calendly_invitee_uri = ?`,
+      [eventUri, invitee.uri]
+    );
+
+    if (integration) {
+      // Setze Status zurück
+      await dbRun(
+        `UPDATE speaker_requests SET status = 'pending', selected_lunch_id = NULL WHERE id = ?`,
+        [integration.speaker_request_id]
       );
     }
-  );
+  } catch (err) {
+    console.error('Fehler beim Verarbeiten der Calendly Stornierung:', err);
+  }
+}
+
+// Legacy: Template Links für manuelle Erstellung
+app.post('/api/speaker-requests/:id/generate-calendly', authenticateToken, async (req, res) => {
+  const requestId = req.params.id;
+
+  try {
+    const request = await dbGet(
+      `SELECT sr.*, s.name as speaker_name, s.email as speaker_email
+       FROM speaker_requests sr
+       JOIN speakers s ON sr.speaker_id = s.id
+       WHERE sr.id = ?`,
+      [requestId]
+    );
+
+    if (!request) {
+      return res.status(404).json({ error: 'Anfrage nicht gefunden' });
+    }
+
+    // Verfügbare Lunches laden
+    const lunches = await dbAll(
+      `SELECT l.* FROM lunches l
+       JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
+       WHERE srl.request_id = ?
+       ORDER BY l.date ASC`,
+      [requestId]
+    );
+
+    // Calendly Link generieren
+    const calendlyLink = generateCalendlyLink(lunches, request);
+    
+    res.json({
+      calendly_link: calendlyLink,
+      alternative_links: {
+        google_calendar: generateGoogleCalendarLink(lunches),
+        doodle: generateDoodleLink(lunches, request)
+      },
+      instructions: {
+        calendly: "Erstellen Sie ein Calendly Event mit diesen Terminen und teilen Sie den Link",
+        google: "Erstellen Sie einen Google Calendar 'Find a time' Link",
+        doodle: "Erstellen Sie eine Doodle-Umfrage mit diesen Terminen"
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Calendly Webhook empfangen (wenn Termin gebucht wurde)
-app.post('/api/webhooks/calendly', (req, res) => {
-  const { event, payload } = req.body;
+app.post('/api/webhooks/calendly', async (req, res) => {
+  try {
+    const { event, payload } = req.body;
 
-  if (event === 'invitee.created') {
-    const { event_uri, invitee_uri } = payload;
-    
-    // Finde die zugehörige Anfrage
-    db.get(
-      `SELECT * FROM calendly_integrations WHERE calendly_event_uri = ?`,
-      [event_uri],
-      (err, integration) => {
-        if (!err && integration) {
-          // Update der Anfrage mit gebuchtem Termin
-          // Hier müsste die Mapping-Logik implementiert werden
-          // zwischen Calendly Event und Lunch-ID
-        }
+    if (event === 'invitee.created') {
+      const { event_uri, invitee_uri } = payload;
+      
+      // Finde die zugehörige Anfrage
+      const integration = await dbGet(
+        `SELECT * FROM calendly_integrations WHERE calendly_event_uri = ?`,
+        [event_uri]
+      );
+      
+      if (integration) {
+        // Update der Anfrage mit gebuchtem Termin
+        // Die Mapping-Logik wird in handleCalendlyBooking implementiert
+        await handleCalendlyBooking({ event: event_uri, invitee: { uri: invitee_uri } });
       }
-    );
-  }
+    }
 
-  res.status(200).send('OK');
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Webhook Fehler:', err);
+    res.status(200).send('OK'); // Immer OK senden, damit Calendly nicht erneut sendet
+  }
 });
 
 // Helper-Funktionen
