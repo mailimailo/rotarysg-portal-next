@@ -253,6 +253,8 @@ async function initDatabase() {
 // Datenbank initialisieren
 initDatabase().catch(err => {
   console.error('❌ Fehler beim Initialisieren der Datenbank:', err);
+  console.error('Stack:', err.stack);
+  // Server trotzdem starten, damit Health Check funktioniert
 });
 
 // Middleware für JWT-Authentifizierung
@@ -296,7 +298,10 @@ app.post('/api/login', async (req, res) => {
     res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
   } catch (err) {
     console.error('Login Fehler:', err);
-    return res.status(500).json({ error: 'Datenbankfehler' });
+    return res.status(500).json({ 
+      error: 'Datenbankfehler',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 });
 
