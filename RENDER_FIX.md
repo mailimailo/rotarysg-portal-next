@@ -68,3 +68,5 @@ Prüfen Sie die **Logs** im Render-Dashboard:
 - Klicken Sie auf den Service → Tab "Logs"
 - Schauen Sie, welche Fehlermeldung genau erscheint
 
+
+

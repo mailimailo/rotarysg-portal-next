@@ -119,6 +119,17 @@ db.serialize(() => {
     UNIQUE(request_id, lunch_id)
   )`);
 
+  // Calendly Integration Tabelle
+  db.run(`CREATE TABLE IF NOT EXISTS calendly_integrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    speaker_request_id INTEGER NOT NULL,
+    calendly_event_uri TEXT,
+    calendly_invitee_uri TEXT,
+    status TEXT DEFAULT 'pending',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (speaker_request_id) REFERENCES speaker_requests(id)
+  )`);
+
   // Standard-Admin-Benutzer erstellen (Passwort: admin123)
   const defaultPassword = bcrypt.hashSync('admin123', 10);
   db.run(`INSERT OR IGNORE INTO users (username, password, role) VALUES 
@@ -915,6 +926,116 @@ app.post('/api/public/speaker-request/:token/decline', (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', service: 'rotary-portal-backend' });
 });
+
+// ========== CALENDLY INTEGRATION ==========
+const axios = require('axios');
+
+// Calendly Link generieren mit verfügbaren Terminen
+app.post('/api/speaker-requests/:id/generate-calendly', authenticateToken, (req, res) => {
+  const requestId = req.params.id;
+
+  db.get(
+    `SELECT sr.*, s.name as speaker_name, s.email as speaker_email
+     FROM speaker_requests sr
+     JOIN speakers s ON sr.speaker_id = s.id
+     WHERE sr.id = ?`,
+    [requestId],
+    (err, request) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+
+      if (!request) {
+        return res.status(404).json({ error: 'Anfrage nicht gefunden' });
+      }
+
+      // Verfügbare Lunches laden
+      db.all(
+        `SELECT l.* FROM lunches l
+         JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
+         WHERE srl.request_id = ?
+         ORDER BY l.date ASC`,
+        [requestId],
+        (err, lunches) => {
+          if (err) {
+            return res.status(500).json({ error: err.message });
+          }
+
+          // Calendly Link generieren
+          // Format: https://calendly.com/username/event-type?month=2026-07&date=2026-07-06
+          // Für einfache Integration: Wir erstellen einen Doodle-ähnlichen Link oder
+          // verwenden Calendly's "Collective" Feature mit mehreren Zeiten
+          
+          const calendlyLink = generateCalendlyLink(lunches, request);
+          
+          res.json({
+            calendly_link: calendlyLink,
+            alternative_links: {
+              google_calendar: generateGoogleCalendarLink(lunches),
+              doodle: generateDoodleLink(lunches, request)
+            },
+            instructions: {
+              calendly: "Erstellen Sie ein Calendly Event mit diesen Terminen und teilen Sie den Link",
+              google: "Erstellen Sie einen Google Calendar 'Find a time' Link",
+              doodle: "Erstellen Sie eine Doodle-Umfrage mit diesen Terminen"
+            }
+          });
+        }
+      );
+    }
+  );
+});
+
+// Calendly Webhook empfangen (wenn Termin gebucht wurde)
+app.post('/api/webhooks/calendly', (req, res) => {
+  const { event, payload } = req.body;
+
+  if (event === 'invitee.created') {
+    const { event_uri, invitee_uri } = payload;
+    
+    // Finde die zugehörige Anfrage
+    db.get(
+      `SELECT * FROM calendly_integrations WHERE calendly_event_uri = ?`,
+      [event_uri],
+      (err, integration) => {
+        if (!err && integration) {
+          // Update der Anfrage mit gebuchtem Termin
+          // Hier müsste die Mapping-Logik implementiert werden
+          // zwischen Calendly Event und Lunch-ID
+        }
+      }
+    );
+  }
+
+  res.status(200).send('OK');
+});
+
+// Helper-Funktionen
+function generateCalendlyLink(lunches, request) {
+  // Calendly erfordert einen Account und Event-Type
+  // Für Demo: Wir geben Anweisungen zurück
+  return `https://calendly.com/YOUR-USERNAME/rotary-lunch?name=${encodeURIComponent(request.speaker_name)}&email=${encodeURIComponent(request.speaker_email || '')}`;
+}
+
+function generateGoogleCalendarLink(lunches) {
+  // Google Calendar "Find a time" Link
+  const dates = lunches.map(l => {
+    const date = new Date(l.date);
+    return date.toISOString().split('T')[0].replace(/-/g, '');
+  }).join(',');
+  
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&dates=${dates}`;
+}
+
+function generateDoodleLink(lunches, request) {
+  // Doodle Umfrage Link (erfordert Doodle Account)
+  const options = lunches.map(l => {
+    const date = new Date(l.date);
+    return `${date.toISOString().split('T')[0]}T${date.toTimeString().split(' ')[0]}`;
+  }).join(',');
+  
+  return `https://doodle.com/poll/create?options=${options}&title=Rotary+Lunch+Terminauswahl`;
+}
 
 app.listen(PORT, () => {
   console.log(`🚀 Server läuft auf Port ${PORT}`);

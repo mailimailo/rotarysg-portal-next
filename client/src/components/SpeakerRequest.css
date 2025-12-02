@@ -157,6 +157,55 @@
   color: #856404;
 }
 
+.external-tools-section {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: #e7f3ff;
+  border-radius: 8px;
+  border-left: 4px solid #667eea;
+}
+
+.external-tools-section strong {
+  display: block;
+  margin-bottom: 0.75rem;
+  color: #333;
+}
+
+.tools-buttons {
+  margin-top: 0.5rem;
+}
+
+.external-tools-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.tool-option {
+  padding: 1.5rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 2px solid #e0e0e0;
+}
+
+.tool-option h3 {
+  margin: 0 0 0.5rem 0;
+  color: #333;
+}
+
+.tool-option p {
+  margin: 0.5rem 0;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.tool-instruction {
+  margin-top: 0.75rem;
+  font-style: italic;
+  color: #999;
+  font-size: 0.85rem;
+}
+
 .request-actions {
   margin-top: 1rem;
   padding-top: 1rem;

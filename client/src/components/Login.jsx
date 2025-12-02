@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { login } from '../api'
 import './Login.css'
 
@@ -7,6 +8,7 @@ function Login({ onLogin }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -16,8 +18,19 @@ function Login({ onLogin }) {
     try {
       const response = await login(username, password)
       onLogin(response.user, response.token)
+      navigate('/')
     } catch (err) {
-      setError(err.response?.data?.error || 'Anmeldung fehlgeschlagen')
+      console.error('Login error:', err)
+      if (err.response) {
+        // Server hat geantwortet mit Fehler
+        setError(err.response.data?.error || `Server-Fehler: ${err.response.status}`)
+      } else if (err.request) {
+        // Request wurde gesendet, aber keine Antwort erhalten
+        setError('Backend nicht erreichbar. Bitte prüfen Sie, ob das Backend läuft.')
+      } else {
+        // Anderer Fehler
+        setError(err.message || 'Anmeldung fehlgeschlagen')
+      }
     } finally {
       setLoading(false)
     }

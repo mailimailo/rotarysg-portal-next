@@ -57,3 +57,5 @@ echo "✅ Setup-Anleitung abgeschlossen!"
 echo ""
 echo "📖 Detaillierte Schritte siehe: DEPLOY_VERCEL_RAILWAY.md"
 
+
+

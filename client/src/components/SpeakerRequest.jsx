@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { getSpeakers, getLunches, createSpeakerRequest, getSpeakerRequests, updateSpeakerRequest } from '../api'
+import { getSpeakers, getLunches, createSpeakerRequest, getSpeakerRequests, updateSpeakerRequest, generateCalendlyLinks } from '../api'
 import './SpeakerRequest.css'
 
 function SpeakerRequest() {
@@ -13,6 +13,8 @@ function SpeakerRequest() {
   const [selectedRequest, setSelectedRequest] = useState(null)
   const [createdRequest, setCreatedRequest] = useState(null)
   const [showCompleted, setShowCompleted] = useState(false)
+  const [showCalendlyModal, setShowCalendlyModal] = useState(false)
+  const [calendlyData, setCalendlyData] = useState(null)
   const [formData, setFormData] = useState({
     speaker_id: '',
     lunch_ids: [],
@@ -198,7 +200,7 @@ Rotary Club St.Gallen`
                 
                 {request.status === 'pending' && (
                   <div className="request-link">
-                    <strong>Auswahl-Link:</strong>
+                    <strong>Auswahl-Link (Eigene Lösung):</strong>
                     <div className="link-container">
                       <code>{`${window.location.origin}/speaker-select/${request.token}`}</code>
                       <button 
@@ -208,6 +210,28 @@ Rotary Club St.Gallen`
                         Link kopieren
                       </button>
                     </div>
+                    
+                    <div className="external-tools-section">
+                      <strong>Externe Tools (Calendly/Doodle/Google):</strong>
+                      <div className="tools-buttons">
+                        <button 
+                          className="btn btn-primary btn-small"
+                          onClick={async () => {
+                            try {
+                              const response = await generateCalendlyLinks(request.id)
+                              setShowCalendlyModal(true)
+                              setCalendlyData(response.data)
+                            } catch (error) {
+                              console.error('Fehler:', error)
+                              alert('Fehler beim Generieren der Links')
+                            }
+                          }}
+                        >
+                          📅 Calendly/Doodle/Google Links
+                        </button>
+                      </div>
+                    </div>
+                    
                     {request.speaker_email && (
                       <div className="email-actions-inline">
                         <button 
@@ -550,6 +574,82 @@ Rotary Club St.Gallen`
                   Speichern
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Calendly/Doodle/Google Links Modal */}
+      {showCalendlyModal && calendlyData && (
+        <div className="modal-overlay" onClick={() => { setShowCalendlyModal(false); setCalendlyData(null); }}>
+          <div className="modal modal-large" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Externe Terminauswahl-Tools</h2>
+              <button className="close-btn" onClick={() => { setShowCalendlyModal(false); setCalendlyData(null); }}>
+                ×
+              </button>
+            </div>
+            
+            <div className="external-tools-content">
+              <p>Wählen Sie ein Tool für die Terminauswahl:</p>
+              
+              <div className="tool-option">
+                <h3>📅 Calendly</h3>
+                <p>Professionelle Terminbuchung (erfordert Calendly Account)</p>
+                <div className="link-container">
+                  <code>{calendlyData.calendly_link}</code>
+                  <button 
+                    className="btn btn-secondary btn-small"
+                    onClick={() => copyLink(calendlyData.calendly_link)}
+                  >
+                    Kopieren
+                  </button>
+                </div>
+                <p className="tool-instruction">{calendlyData.instructions.calendly}</p>
+              </div>
+
+              <div className="tool-option">
+                <h3>🗓️ Google Calendar</h3>
+                <p>Google Calendar "Find a time" Link</p>
+                <div className="link-container">
+                  <code>{calendlyData.alternative_links.google_calendar}</code>
+                  <button 
+                    className="btn btn-secondary btn-small"
+                    onClick={() => copyLink(calendlyData.alternative_links.google_calendar)}
+                  >
+                    Kopieren
+                  </button>
+                </div>
+                <p className="tool-instruction">{calendlyData.instructions.google}</p>
+              </div>
+
+              <div className="tool-option">
+                <h3>📊 Doodle</h3>
+                <p>Doodle Umfrage erstellen (erfordert Doodle Account)</p>
+                <div className="link-container">
+                  <code>{calendlyData.alternative_links.doodle}</code>
+                  <button 
+                    className="btn btn-secondary btn-small"
+                    onClick={() => copyLink(calendlyData.alternative_links.doodle)}
+                  >
+                    Kopieren
+                  </button>
+                </div>
+                <p className="tool-instruction">{calendlyData.instructions.doodle}</p>
+              </div>
+
+              <div className="info-box">
+                <strong>💡 Hinweis:</strong> Nach der Terminauswahl in einem externen Tool müssen Sie den Termin manuell im System bestätigen (Status auf "Zusage" setzen).
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
+              <button 
+                className="btn btn-primary"
+                onClick={() => { setShowCalendlyModal(false); setCalendlyData(null); }}
+              >
+                Fertig
+              </button>
             </div>
           </div>
         </div>
