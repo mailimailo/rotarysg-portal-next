@@ -1,89 +1,74 @@
-# ⚡ Schnelles Deployment - Vercel + Railway
+# 🚀 Schnelles Deployment - Link für Vera
 
-## 🚂 Schritt 1: Backend auf Railway (2 Minuten)
+## In 5 Schritten zum dauerhaften Link:
 
-Öffnen Sie ein Terminal und führen Sie aus:
+### 1️⃣ Railway Account erstellen
+- Gehen Sie zu: **https://railway.app**
+- **"Start a New Project"** → Login mit GitHub
 
-```bash
-cd /Users/milostoessel/rotary-portal
+### 2️⃣ Backend deployen
+1. **"New Project"** → **"Deploy from GitHub repo"**
+2. Repository: **`rotarysg-portal-next`**
+3. **Root Directory:** `server` ⚠️ WICHTIG!
+4. **Settings** → **Variables** → Fügen Sie hinzu:
+   ```
+   JWT_SECRET=rotary-secret-key-2026
+   PORT=3001
+   ```
+5. **Settings** → **Generate Domain**
+6. **Backend-URL kopieren!** (z.B. `rotary-backend.railway.app`)
 
-# 1. Bei Railway anmelden
-railway login
+### 3️⃣ Frontend deployen
+1. **Neues Projekt** → **"Deploy from GitHub repo"**
+2. Repository: **`rotarysg-portal-next`**
+3. **Root Directory:** `client` ⚠️ WICHTIG!
+4. **Settings** → **Variables** → Fügen Sie hinzu:
+   ```
+   VITE_API_URL=https://ihr-backend-url.railway.app
+   ```
+   *(Ersetzen Sie mit der tatsächlichen Backend-URL aus Schritt 2!)*
+5. **Settings** → **Generate Domain**
+6. **Frontend-URL kopieren!** (z.B. `rotary-portal.railway.app`)
 
-# 2. Neues Projekt erstellen
-railway init
-# → Wählen Sie: "Create a new project"
-# → Name: rotary-portal-backend
+### 4️⃣ Testen
+- Öffnen Sie die Frontend-URL
+- Login: `praesident` / `admin123`
+- Alles sollte funktionieren!
 
-# 3. Environment Variables setzen
-railway variables set JWT_SECRET=509b0b71377537603efca515e92307e0bd6fcf5d5407f091b668fbaf4d327dc1
-railway variables set NODE_ENV=production
-
-# 4. Root Directory setzen (wichtig!)
-railway variables set RAILWAY_SERVICE_ROOT=server
-
-# 5. Deployen
-railway up
-
-# 6. Backend-URL anzeigen (NOTIEREN!)
-railway domain
-```
-
-**Notieren Sie die Backend-URL!** (z.B. `https://rotary-portal-backend-production.up.railway.app`)
-
----
-
-## 🌐 Schritt 2: Frontend auf Vercel (2 Minuten)
-
-In einem neuen Terminal:
-
-```bash
-cd /Users/milostoessel/rotary-portal/client
-
-# 1. Bei Vercel anmelden
-vercel login
-
-# 2. Deployen
-vercel --prod
-
-# Folgen Sie den Fragen:
-# - Set up and deploy? → Yes
-# - Link to existing project? → No
-# - Project name? → rotary-portal-frontend
-# - Directory? → ./ (Enter drücken)
-# - Override settings? → No
-
-# 3. Environment Variable setzen (wichtig!)
-vercel env add VITE_API_URL production
-# → Geben Sie die Railway Backend-URL ein (von Schritt 1)
-
-# 4. Neu deployen mit Environment Variable
-vercel --prod
-```
-
-**Notieren Sie die Frontend-URL!** (wird am Ende angezeigt)
+### 5️⃣ Link an Vera senden
+**✅ Fertig!** Senden Sie die Frontend-URL an Vera.
 
 ---
 
-## ✅ Fertig!
+## 📋 Checklist:
 
-Ihre Anwendung ist jetzt live! 🎉
-
-- **Frontend:** (Vercel URL)
-- **Backend:** (Railway URL)
-
-### Login:
-- Benutzername: `praesident` oder `programm`
-- Passwort: `admin123`
+- [ ] Railway Account erstellt
+- [ ] Backend deployed (Root: `server`)
+- [ ] Backend Domain generiert und kopiert
+- [ ] Frontend deployed (Root: `client`)
+- [ ] `VITE_API_URL` auf Backend-URL gesetzt
+- [ ] Frontend Domain generiert
+- [ ] Getestet (Login funktioniert)
+- [ ] Link an Vera gesendet!
 
 ---
 
-## 💡 Tipps:
+## 🆘 Probleme?
 
-- **Automatische Updates:** Bei jedem Git Push wird automatisch neu deployed
-- **Logs ansehen:**
-  - Railway: `railway logs`
-  - Vercel: `vercel logs`
+**Backend läuft nicht:**
+- Prüfen Sie Logs in Railway
+- Prüfen Sie ob `PORT` Variable gesetzt ist
 
+**Frontend kann Backend nicht erreichen:**
+- Prüfen Sie `VITE_API_URL` (muss mit `https://` beginnen!)
+- Stelle sicher, dass Backend-URL korrekt ist
 
+**CORS Fehler:**
+- Backend sollte automatisch CORS erlauben
+- Prüfen Sie die Backend-Logs
 
+---
+
+## 💡 Tipp:
+
+Die Links sind **dauerhaft** und funktionieren immer, solange Railway läuft (kostenlos für kleine Projekte).
