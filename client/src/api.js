@@ -1,7 +1,7 @@
 import axios from 'axios'
 
-// API URL: Lokaler Proxy für Entwicklung
-const API_URL = '/api'
+// API URL: Production oder lokaler Proxy
+const API_URL = import.meta.env.VITE_API_URL || '/api'
 
 const api = axios.create({
   baseURL: API_URL,
@@ -62,7 +62,7 @@ export const updateSpeakerRequest = (id, data) => api.put(`/speaker-requests/${i
 export const generateCalendlyLinks = (id) => api.post(`/speaker-requests/${id}/generate-calendly`)
 // Öffentliche API-Aufrufe (ohne Authentifizierung)
 const publicApi = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_URL || '/api',
   headers: {
     'Content-Type': 'application/json'
   }
