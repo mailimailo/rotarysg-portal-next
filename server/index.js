@@ -932,7 +932,275 @@ app.get('/api/health', (req, res) => {
 // ========== CALENDLY INTEGRATION ==========
 const axios = require('axios');
 
-// Calendly Link generieren mit verfügbaren Terminen
+// Calendly API Konfiguration (aus Environment Variables)
+const CALENDLY_API_TOKEN = process.env.CALENDLY_API_TOKEN || '';
+const CALENDLY_WEBHOOK_SIGNING_KEY = process.env.CALENDLY_WEBHOOK_SIGNING_KEY || '';
+const CALENDLY_BASE_URL = 'https://api.calendly.com';
+
+// Calendly API Helper
+const calendlyApi = axios.create({
+  baseURL: CALENDLY_BASE_URL,
+  headers: {
+    'Authorization': `Bearer ${CALENDLY_API_TOKEN}`,
+    'Content-Type': 'application/json'
+  }
+});
+
+// Calendly Event Type erstellen oder abrufen
+app.get('/api/calendly/event-types', authenticateToken, async (req, res) => {
+  if (!CALENDLY_API_TOKEN) {
+    return res.status(400).json({ 
+      error: 'Calendly API Token nicht konfiguriert',
+      instructions: 'Bitte setzen Sie CALENDLY_API_TOKEN in den Environment Variables'
+    });
+  }
+
+  try {
+    // Hole User Info
+    const userResponse = await calendlyApi.get('/users/me');
+    const userUri = userResponse.data.resource.uri;
+    
+    // Hole Event Types
+    const response = await calendlyApi.get('/event_types', {
+      params: {
+        user: userUri,
+        count: 100
+      }
+    });
+    res.json(response.data);
+  } catch (error) {
+    console.error('Calendly API Fehler:', error.response?.data || error.message);
+    res.status(500).json({ 
+      error: 'Fehler beim Abrufen der Event Types',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+// Calendly Scheduling Link für eine Anfrage erstellen
+app.post('/api/speaker-requests/:id/create-calendly', authenticateToken, async (req, res) => {
+  const requestId = req.params.id;
+  const { event_type_uri } = req.body;
+
+  if (!CALENDLY_API_TOKEN) {
+    return res.status(400).json({ 
+      error: 'Calendly API Token nicht konfiguriert',
+      instructions: 'Bitte setzen Sie CALENDLY_API_TOKEN in den Environment Variables. Sie erhalten den Token unter: https://calendly.com/integrations/api_webhooks'
+    });
+  }
+
+  if (!event_type_uri) {
+    return res.status(400).json({ error: 'Event Type URI erforderlich' });
+  }
+
+  db.get(
+    `SELECT sr.*, s.name as speaker_name, s.email as speaker_email
+     FROM speaker_requests sr
+     JOIN speakers s ON sr.speaker_id = s.id
+     WHERE sr.id = ?`,
+    [requestId],
+    async (err, request) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+
+      if (!request) {
+        return res.status(404).json({ error: 'Anfrage nicht gefunden' });
+      }
+
+      // Verfügbare Lunches laden
+      db.all(
+        `SELECT l.* FROM lunches l
+         JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
+         WHERE srl.request_id = ?
+         ORDER BY l.date ASC`,
+        [requestId],
+        async (err, lunches) => {
+          if (err) {
+            return res.status(500).json({ error: err.message });
+          }
+
+          try {
+            // Calendly Scheduling Link erstellen
+            const schedulingLink = await createCalendlySchedulingLink(event_type_uri, lunches, request);
+            
+            // Integration speichern
+            db.run(
+              `INSERT INTO calendly_integrations (speaker_request_id, calendly_event_uri, status)
+               VALUES (?, ?, 'pending')
+               ON CONFLICT(speaker_request_id) DO UPDATE SET
+                 calendly_event_uri = excluded.calendly_event_uri,
+                 status = 'pending'`,
+              [requestId, schedulingLink.event_uri || event_type_uri],
+              function(err) {
+                if (err) {
+                  console.error('Fehler beim Speichern der Integration:', err);
+                }
+              }
+            );
+
+            res.json({
+              success: true,
+              scheduling_link: schedulingLink.booking_url || `https://calendly.com/${event_type_uri.split('/').pop()}`,
+              event_uri: schedulingLink.event_uri || event_type_uri,
+              message: 'Calendly Link erfolgreich erstellt'
+            });
+          } catch (error) {
+            console.error('Calendly Fehler:', error.response?.data || error.message);
+            res.status(500).json({ 
+              error: 'Fehler beim Erstellen des Calendly Links',
+              details: error.response?.data || error.message
+            });
+          }
+        }
+      );
+    }
+  );
+});
+
+// Calendly Scheduling Link erstellen
+async function createCalendlySchedulingLink(eventTypeUri, lunches, request) {
+  try {
+    // Hole Event Type Details
+    const eventTypeResponse = await calendlyApi.get(eventTypeUri.replace(CALENDLY_BASE_URL, ''));
+    const eventType = eventTypeResponse.data.resource;
+    
+    // Erstelle Scheduling Link mit Custom Parameters
+    const username = eventTypeUri.split('/')[4];
+    const eventSlug = eventTypeUri.split('/').pop();
+    const bookingUrl = `https://calendly.com/${username}/${eventSlug}?name=${encodeURIComponent(request.speaker_name)}&email=${encodeURIComponent(request.speaker_email || '')}`;
+
+    return {
+      event_uri: eventTypeUri,
+      booking_url: bookingUrl
+    };
+  } catch (error) {
+    // Fallback: Verwende Standard Event Type URL
+    const username = eventTypeUri.split('/')[4];
+    const eventSlug = eventTypeUri.split('/').pop();
+    return {
+      event_uri: eventTypeUri,
+      booking_url: `https://calendly.com/${username}/${eventSlug}?name=${encodeURIComponent(request.speaker_name)}&email=${encodeURIComponent(request.speaker_email || '')}`
+    };
+  }
+}
+
+// Calendly Webhook empfangen (wenn Termin gebucht wurde)
+app.post('/api/webhooks/calendly', (req, res) => {
+  // Parse JSON body
+  let payload;
+  try {
+    payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+  } catch (e) {
+    return res.status(400).json({ error: 'Invalid JSON' });
+  }
+
+  const event = payload.event;
+  const data = payload.payload || payload;
+
+  if (event === 'invitee.created') {
+    // Termin wurde gebucht
+    handleCalendlyBooking(data);
+  } else if (event === 'invitee.canceled') {
+    // Termin wurde storniert
+    handleCalendlyCancellation(data);
+  }
+
+  res.status(200).send('OK');
+});
+
+// Calendly Buchung verarbeiten
+function handleCalendlyBooking(data) {
+  const eventUri = data.event;
+  const invitee = data.invitee || {};
+  const inviteeEmail = invitee.email;
+  const scheduledEvent = invitee.scheduled_event || data.scheduled_event || {};
+  const scheduledTime = scheduledEvent.start_time;
+
+  // Finde die zugehörige Anfrage über Event URI
+  db.get(
+    `SELECT ci.*, sr.speaker_id, sr.id as request_id
+     FROM calendly_integrations ci
+     JOIN speaker_requests sr ON ci.speaker_request_id = sr.id
+     WHERE ci.calendly_event_uri = ?`,
+    [eventUri],
+    (err, integration) => {
+      if (err || !integration) {
+        console.error('Integration nicht gefunden für Event:', eventUri);
+        return;
+      }
+
+      // Finde den passenden Lunch basierend auf der gebuchten Zeit
+      if (scheduledTime) {
+        const bookedDate = new Date(scheduledTime);
+        
+        db.all(
+          `SELECT l.* FROM lunches l
+           JOIN speaker_request_lunches srl ON l.id = srl.lunch_id
+           WHERE srl.request_id = ?
+           ORDER BY ABS(julianday(l.date) - julianday(?)) ASC
+           LIMIT 1`,
+          [integration.speaker_request_id, bookedDate.toISOString()],
+          (err, lunches) => {
+            if (!err && lunches.length > 0) {
+              const selectedLunch = lunches[0];
+              
+              // Update der Anfrage
+              db.run(
+                `UPDATE speaker_requests 
+                 SET selected_lunch_id = ?, status = 'accepted', responded_at = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [selectedLunch.id, integration.speaker_request_id]
+              );
+
+              // Update Lunch
+              db.run(
+                `UPDATE lunches SET status = ?, speaker_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                ['confirmed', integration.speaker_id, selectedLunch.id]
+              );
+
+              // Update Speaker
+              db.run(
+                `UPDATE speakers SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                ['confirmed', integration.speaker_id]
+              );
+
+              // Update Integration
+              db.run(
+                `UPDATE calendly_integrations SET calendly_invitee_uri = ?, status = 'completed' WHERE id = ?`,
+                [invitee.uri || '', integration.id]
+              );
+
+              console.log(`✅ Calendly Buchung verarbeitet: Lunch ${selectedLunch.id} für Speaker ${integration.speaker_id}`);
+            }
+          }
+        );
+      }
+    }
+  );
+}
+
+// Calendly Stornierung verarbeiten
+function handleCalendlyCancellation(data) {
+  const eventUri = data.event;
+  const invitee = data.invitee || {};
+
+  db.get(
+    `SELECT * FROM calendly_integrations WHERE calendly_event_uri = ? OR calendly_invitee_uri = ?`,
+    [eventUri, invitee.uri],
+    (err, integration) => {
+      if (!err && integration) {
+        // Setze Status zurück
+        db.run(
+          `UPDATE speaker_requests SET status = 'pending', selected_lunch_id = NULL WHERE id = ?`,
+          [integration.speaker_request_id]
+        );
+      }
+    }
+  );
+}
+
+// Legacy: Template Links für manuelle Erstellung
 app.post('/api/speaker-requests/:id/generate-calendly', authenticateToken, (req, res) => {
   const requestId = req.params.id;
 
