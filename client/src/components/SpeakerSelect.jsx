@@ -1,7 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { Calendar, momentLocalizer } from 'react-big-calendar'
+import moment from 'moment'
+import 'moment/locale/de'
+import 'react-big-calendar/lib/css/react-big-calendar.css'
 import { getPublicSpeakerRequest, selectLunchForRequest, declineSpeakerRequest } from '../api'
 import './SpeakerSelect.css'
+
+moment.locale('de')
+const localizer = momentLocalizer(moment)
 
 function SpeakerSelect() {
   const { token } = useParams()
@@ -12,6 +19,8 @@ function SpeakerSelect() {
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState('')
+  const [view, setView] = useState('calendar') // 'calendar' oder 'list'
+  const [selectedDate, setSelectedDate] = useState(null)
 
   useEffect(() => {
     loadRequest()
@@ -147,39 +156,112 @@ function SpeakerSelect() {
               <p>Bitte wählen Sie einen der folgenden Termine aus, der für Sie passt:</p>
             </div>
 
-            <div className="lunches-grid">
-              {request.available_lunches.map(lunch => (
-                <div 
-                  key={lunch.id} 
-                  className={`lunch-option ${submitting ? 'disabled' : ''}`}
-                  onClick={() => !submitting && handleSelect(lunch.id)}
-                >
-                  <div className="lunch-date">
-                    {new Date(lunch.date).toLocaleDateString('de-CH', {
-                      weekday: 'long',
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric'
-                    })}
-                  </div>
-                  <div className="lunch-time">
-                    {new Date(lunch.date).toLocaleTimeString('de-CH', {
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })} Uhr
-                  </div>
-                  <div className="lunch-location">
-                    📍 {lunch.location || 'Netts Schützengarten'}
-                  </div>
-                  {lunch.title && (
-                    <div className="lunch-title">{lunch.title}</div>
-                  )}
-                  <div className="select-button">
-                    {submitting ? 'Wird verarbeitet...' : '✓ Diesen Termin wählen'}
+            {/* View Toggle */}
+            <div className="view-toggle">
+              <button 
+                className={view === 'calendar' ? 'active' : ''}
+                onClick={() => setView('calendar')}
+              >
+                📅 Kalender
+              </button>
+              <button 
+                className={view === 'list' ? 'active' : ''}
+                onClick={() => setView('list')}
+              >
+                📋 Liste
+              </button>
+            </div>
+
+            {view === 'calendar' ? (
+              <div className="calendly-calendar-view">
+                <Calendar
+                  localizer={localizer}
+                  events={request.available_lunches.map(lunch => ({
+                    id: lunch.id,
+                    title: `${new Date(lunch.date).toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' })} Uhr`,
+                    start: new Date(lunch.date),
+                    end: new Date(new Date(lunch.date).getTime() + 75 * 60 * 1000), // 75 Minuten
+                    resource: lunch
+                  }))}
+                  startAccessor="start"
+                  endAccessor="end"
+                  style={{ height: 500 }}
+                  onSelectEvent={(event) => {
+                    if (!submitting) {
+                      setSelectedDate(event.start)
+                      handleSelect(event.resource.id)
+                    }
+                  }}
+                  eventPropGetter={(event) => ({
+                    style: {
+                      backgroundColor: '#667eea',
+                      borderRadius: '6px',
+                      opacity: 0.9,
+                      color: 'white',
+                      border: '0px',
+                      cursor: submitting ? 'not-allowed' : 'pointer'
+                    }
+                  })}
+                  messages={{
+                    next: 'Nächster',
+                    previous: 'Vorheriger',
+                    today: 'Heute',
+                    month: 'Monat',
+                    week: 'Woche',
+                    day: 'Tag',
+                    agenda: 'Agenda',
+                    date: 'Datum',
+                    time: 'Zeit',
+                    event: 'Termin',
+                    noEventsInRange: 'Keine verfügbaren Termine'
+                  }}
+                  culture="de"
+                  defaultView="month"
+                  views={['month', 'week', 'day']}
+                />
+                
+                <div className="calendar-legend">
+                  <div className="legend-item">
+                    <span className="legend-color" style={{ backgroundColor: '#667eea' }}></span>
+                    <span>Verfügbare Termine - Klicken Sie auf einen Termin zum Auswählen</span>
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ) : (
+              <div className="lunches-grid">
+                {request.available_lunches.map(lunch => (
+                  <div 
+                    key={lunch.id} 
+                    className={`lunch-option ${submitting ? 'disabled' : ''}`}
+                    onClick={() => !submitting && handleSelect(lunch.id)}
+                  >
+                    <div className="lunch-date">
+                      {new Date(lunch.date).toLocaleDateString('de-CH', {
+                        weekday: 'long',
+                        day: 'numeric',
+                        month: 'long',
+                        year: 'numeric'
+                      })}
+                    </div>
+                    <div className="lunch-time">
+                      {new Date(lunch.date).toLocaleTimeString('de-CH', {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })} Uhr
+                    </div>
+                    <div className="lunch-location">
+                      📍 {lunch.location || 'Netts Schützengarten'}
+                    </div>
+                    {lunch.title && (
+                      <div className="lunch-title">{lunch.title}</div>
+                    )}
+                    <div className="select-button">
+                      {submitting ? 'Wird verarbeitet...' : '✓ Diesen Termin wählen'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="decline-section">
               <p>Keiner der Termine passt für Sie?</p>
