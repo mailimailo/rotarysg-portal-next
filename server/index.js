@@ -162,7 +162,8 @@ async function initDatabase() {
       console.error('Error Code:', err.code);
       console.error('Error Detail:', err.detail);
       console.error('Error Message:', err.message);
-      throw err; // Fehler weiterwerfen, damit wir es sehen
+      // Fehler NICHT weiterwerfen - Server soll trotzdem starten
+      // Tabellen werden beim ersten Request erneut versucht
   } else {
     // SQLite Schema (lokal)
     db.serialize(() => {
@@ -302,8 +303,27 @@ const authenticateToken = (req, res, next) => {
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
 
+  console.log('🔵 Login Versuch - dbType:', dbType, 'dbInitialized:', dbInitialized);
+
+  // Prüfe ob Datenbank initialisiert ist
+  if (!dbInitialized && dbType === 'postgres') {
+    console.log('⚠️ Datenbank noch nicht initialisiert, versuche erneut...');
+    try {
+      await initDatabase();
+      dbInitialized = true;
+      console.log('✅ Datenbank erfolgreich initialisiert nach Login-Versuch');
+    } catch (initErr) {
+      console.error('❌ Fehler bei erneuter Initialisierung:', initErr);
+      return res.status(500).json({ 
+        error: 'Datenbank nicht verfügbar',
+        details: initErr.message
+      });
+    }
+  }
+
   try {
     const user = await dbGet('SELECT * FROM users WHERE username = ?', [username]);
+    console.log('🔵 User gefunden:', user ? 'Ja' : 'Nein');
 
     if (!user) {
       return res.status(401).json({ error: 'Ungültige Anmeldedaten' });
@@ -320,12 +340,17 @@ app.post('/api/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    console.log('✅ Login erfolgreich für:', username);
     res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
   } catch (err) {
-    console.error('Login Fehler:', err);
+    console.error('❌ Login Fehler:', err);
+    console.error('❌ Error Code:', err.code);
+    console.error('❌ Error Message:', err.message);
+    console.error('❌ Error Detail:', err.detail);
     return res.status(500).json({ 
       error: 'Datenbankfehler',
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+      details: err.message,
+      code: err.code
     });
   }
 });
