@@ -203,66 +203,70 @@ Rotary Club St.Gallen`
                 
                 {request.status === 'pending' && (
                   <div className="request-link">
-                    <strong>Auswahl-Link (Eigene Lösung):</strong>
-                    <div className="link-container">
-                      <code>{`${window.location.origin}/speaker-select/${request.token}`}</code>
-                      <button 
-                        className="btn btn-secondary btn-small"
-                        onClick={() => copyLink(`${window.location.origin}/speaker-select/${request.token}`)}
-                      >
-                        Link kopieren
-                      </button>
+                    <div className="primary-link-section">
+                      <strong>📅 Terminauswahl-Link (Eigene Plattform):</strong>
+                      <p className="link-description">Der Speaker kann direkt auf dieser Plattform einen Termin auswählen - keine externen Tools nötig!</p>
+                      <div className="link-container">
+                        <code>{`${window.location.origin}/speaker-select/${request.token}`}</code>
+                        <button 
+                          className="btn btn-primary btn-small"
+                          onClick={() => copyLink(`${window.location.origin}/speaker-select/${request.token}`)}
+                        >
+                          📋 Link kopieren
+                        </button>
+                      </div>
+                      {request.speaker_email && (
+                        <div className="email-actions-inline">
+                          <button 
+                            className="btn btn-secondary btn-small"
+                            onClick={() => copyEmailTemplate(request)}
+                          >
+                            📋 E-Mail-Vorlage
+                          </button>
+                          <button 
+                            className="btn btn-primary btn-small"
+                            onClick={() => openEmailClient(request)}
+                          >
+                            ✉️ E-Mail öffnen
+                          </button>
+                        </div>
+                      )}
+                      <p className="link-hint">✅ Funktioniert sofort - keine zusätzliche Konfiguration nötig!</p>
                     </div>
                     
                     <div className="external-tools-section">
-                      <strong>Externe Tools (Calendly/Doodle/Google):</strong>
-                      <div className="tools-buttons">
-                        <button 
-                          className="btn btn-primary btn-small"
-                          onClick={() => {
-                            setSelectedRequestForCalendly(request.id)
-                            setShowCalendlyIntegration(true)
-                          }}
-                        >
-                          📅 Calendly (Automatisch)
-                        </button>
-                        <button 
-                          className="btn btn-secondary btn-small"
-                          onClick={async () => {
-                            try {
-                              const response = await generateCalendlyLinks(request.id)
-                              setShowCalendlyModal(true)
-                              setCalendlyData(response.data)
-                            } catch (error) {
-                              console.error('Fehler:', error)
-                              alert('Fehler beim Generieren der Links')
-                            }
-                          }}
-                        >
-                          🔗 Doodle/Google (Manuell)
-                        </button>
-                      </div>
+                      <details>
+                        <summary><strong>🔗 Alternative: Externe Tools (optional)</strong></summary>
+                        <p className="optional-hint">Falls Sie Calendly, Doodle oder Google Calendar bevorzugen:</p>
+                        <div className="tools-buttons">
+                          <button 
+                            className="btn btn-secondary btn-small"
+                            onClick={() => {
+                              setSelectedRequestForCalendly(request.id)
+                              setShowCalendlyIntegration(true)
+                            }}
+                          >
+                            📅 Calendly (Automatisch)
+                          </button>
+                          <button 
+                            className="btn btn-secondary btn-small"
+                            onClick={async () => {
+                              try {
+                                const response = await generateCalendlyLinks(request.id)
+                                setShowCalendlyModal(true)
+                                setCalendlyData(response.data)
+                              } catch (error) {
+                                console.error('Fehler:', error)
+                                alert('Fehler beim Generieren der Links')
+                              }
+                            }}
+                          >
+                            🔗 Doodle/Google (Manuell)
+                          </button>
+                        </div>
+                      </details>
                     </div>
                     
-                    {request.speaker_email && (
-                      <div className="email-actions-inline">
-                        <button 
-                          className="btn btn-secondary btn-small"
-                          onClick={() => copyEmailTemplate(request)}
-                        >
-                          📋 E-Mail-Vorlage
-                        </button>
-                        <button 
-                          className="btn btn-primary btn-small"
-                          onClick={() => openEmailClient(request)}
-                        >
-                          ✉️ E-Mail öffnen
-                        </button>
-                      </div>
-                    )}
-                    <p className="link-hint">Link kann per E-Mail, WhatsApp oder persönlich weitergegeben werden</p>
-                  </div>
-                )}
 
                 {request.status === 'pending' && (
                   <div className="request-actions">
