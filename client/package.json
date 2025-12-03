@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 3000 --host",
-    "start": "vite preview --port 3000 --host"
+    "start": "serve -s dist -l 3000"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -16,7 +16,8 @@
     "axios": "^1.6.2",
     "react-big-calendar": "^1.8.3",
     "moment": "^2.29.4",
-    "date-fns": "^2.30.0"
+    "date-fns": "^2.30.0",
+    "serve": "^14.2.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
