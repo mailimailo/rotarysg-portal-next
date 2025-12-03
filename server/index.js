@@ -157,13 +157,15 @@ async function initDatabase() {
       }
       
       console.log('✅ PostgreSQL Schema vollständig erstellt');
+      return true; // Erfolgreich initialisiert
     } catch (err) {
       console.error('❌ Fehler beim Erstellen der PostgreSQL Tabellen:', err);
       console.error('Error Code:', err.code);
       console.error('Error Detail:', err.detail);
       console.error('Error Message:', err.message);
-      // Fehler NICHT weiterwerfen - Server soll trotzdem starten
-      // Tabellen werden beim ersten Request erneut versucht
+      console.error('Error Stack:', err.stack);
+      // Fehler weiterwerfen, damit Retry-Logik funktioniert
+      throw err;
     }
   } else {
     // SQLite Schema (lokal)
@@ -272,17 +274,36 @@ async function initDatabase() {
 
 // Datenbank initialisieren
 let dbInitialized = false;
-initDatabase()
-  .then(() => {
+let dbInitAttempts = 0;
+const MAX_INIT_ATTEMPTS = 3;
+
+async function tryInitDatabase() {
+  dbInitAttempts++;
+  try {
+    await initDatabase();
     dbInitialized = true;
     console.log('✅ Datenbank erfolgreich initialisiert');
-  })
-  .catch(err => {
-    console.error('❌ Fehler beim Initialisieren der Datenbank:', err);
-    console.error('Stack:', err.stack);
-    // Server trotzdem starten, damit Health Check funktioniert
-    dbInitialized = false;
-  });
+    return true;
+  } catch (err) {
+    console.error(`❌ Fehler beim Initialisieren der Datenbank (Versuch ${dbInitAttempts}/${MAX_INIT_ATTEMPTS}):`, err);
+    console.error('Error Code:', err.code);
+    console.error('Error Message:', err.message);
+    if (dbInitAttempts < MAX_INIT_ATTEMPTS) {
+      console.log(`⏳ Warte 2 Sekunden vor erneutem Versuch...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return tryInitDatabase();
+    } else {
+      console.error('❌ Maximale Anzahl von Initialisierungsversuchen erreicht');
+      dbInitialized = false;
+      return false;
+    }
+  }
+}
+
+tryInitDatabase().catch(err => {
+  console.error('❌ Kritischer Fehler bei Datenbankinitialisierung:', err);
+  dbInitialized = false;
+});
 
 // Middleware für JWT-Authentifizierung
 const authenticateToken = (req, res, next) => {
@@ -307,17 +328,21 @@ app.post('/api/login', async (req, res) => {
   console.log('🔵 Login Versuch - dbType:', dbType, 'dbInitialized:', dbInitialized);
 
   // Prüfe ob Datenbank initialisiert ist
-  if (!dbInitialized && dbType === 'postgres') {
+  if (!dbInitialized) {
     console.log('⚠️ Datenbank noch nicht initialisiert, versuche erneut...');
     try {
-      await initDatabase();
-      dbInitialized = true;
-      console.log('✅ Datenbank erfolgreich initialisiert nach Login-Versuch');
+      const success = await tryInitDatabase();
+      if (!success) {
+        return res.status(500).json({ 
+          error: 'Datenbank nicht verfügbar',
+          details: 'Datenbankinitialisierung fehlgeschlagen. Bitte prüfen Sie die Backend-Logs.'
+        });
+      }
     } catch (initErr) {
       console.error('❌ Fehler bei erneuter Initialisierung:', initErr);
       return res.status(500).json({ 
         error: 'Datenbank nicht verfügbar',
-        details: initErr.message
+        details: initErr.message || 'Unbekannter Datenbankfehler'
       });
     }
   }
