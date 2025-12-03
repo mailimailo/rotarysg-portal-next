@@ -164,6 +164,7 @@ async function initDatabase() {
       console.error('Error Message:', err.message);
       // Fehler NICHT weiterwerfen - Server soll trotzdem starten
       // Tabellen werden beim ersten Request erneut versucht
+    }
   } else {
     // SQLite Schema (lokal)
     db.serialize(() => {
